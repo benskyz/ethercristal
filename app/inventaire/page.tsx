@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseBrowserClient } from "../../lib/supabase";
+import { requireSupabaseBrowserClient } from "../../lib/supabase";
 
 type InventoryRow = {
   id: string;
@@ -118,7 +118,7 @@ export default function InventairePage() {
     setErrorMsg("");
 
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data: auth } = await supabase.auth.getUser();
 
       if (!auth.user) {
@@ -189,7 +189,7 @@ export default function InventairePage() {
 
   async function refreshProfileAndInventory() {
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) return;
 
@@ -209,7 +209,7 @@ export default function InventairePage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data, error } = await supabase.rpc("equip_inventory_item", {
         item_id_input: item.id,
       });
@@ -239,7 +239,7 @@ export default function InventairePage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data, error } = await supabase.rpc("unequip_inventory_item", {
         item_id_input: item.id,
       });

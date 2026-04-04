@@ -2,7 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseBrowserClient } from "../../lib/supabase";
+import { requireSupabaseBrowserClient } from "../../lib/supabase";
+
+type ProfileRow = {
+  id: string;
+  username?: string | null;
+  vip_level?: string | null;
+  ether_balance?: number | null;
+  is_verified?: boolean | null;
+  avatar_url?: string | null;
+  display_name_color?: string | null;
+  display_name_glow?: string | null;
+  display_name_gradient?: string | null;
+};
 
 type ShopItemRow = {
   id: string;
@@ -20,7 +32,7 @@ type ShopItemRow = {
 
 type InventoryRow = {
   id: string;
-  user_id: string;
+  user_id?: string | null;
   item_slug?: string | null;
   item_type?: string | null;
   is_active?: boolean | null;
@@ -28,18 +40,60 @@ type InventoryRow = {
   created_at?: string | null;
 };
 
-type ProfileRow = {
+type ShopFilter = "all" | "effect" | "theme" | "bundle";
+
+type PremiumCard = {
   id: string;
-  username?: string | null;
-  vip_level?: string | null;
-  ether_balance?: number | null;
-  is_verified?: boolean | null;
-  display_name_color?: string | null;
-  display_name_glow?: string | null;
-  display_name_gradient?: string | null;
+  title: string;
+  subtitle: string;
+  accent: "gold" | "diamond";
+  text: string;
+  features: string[];
+  cta: string;
+  href: string;
 };
 
-type CategoryFilter = "all" | "effect" | "theme" | "bundle" | "vip";
+const FILTERS: ShopFilter[] = ["all", "effect", "theme", "bundle"];
+
+const FILTER_LABELS: Record<ShopFilter, string> = {
+  all: "Tous",
+  effect: "Effets",
+  theme: "Thèmes",
+  bundle: "Bundles",
+};
+
+const PREMIUM_CARDS: PremiumCard[] = [
+  {
+    id: "vip",
+    title: "VIP Gold",
+    subtitle: "Accès premium chaud et luxueux",
+    accent: "gold",
+    text: "Débloque les espaces premium, améliore ta présence et entre dans un univers plus exclusif.",
+    features: [
+      "Accès aux espaces VIP",
+      "Profil mieux mis en avant",
+      "Badge premium visible",
+      "Expérience plus haut de gamme",
+    ],
+    cta: "Voir les offres VIP",
+    href: "/vip",
+  },
+  {
+    id: "vip-plus",
+    title: "VIP+ Diamond",
+    subtitle: "Bleu diamant, plus rare, plus précieux",
+    accent: "diamond",
+    text: "Le palier supérieur pour une image plus rare, plus nette et plus prestigieuse.",
+    features: [
+      "Tous les avantages VIP",
+      "Signature bleu diamant",
+      "Présence plus exclusive",
+      "Statut premium supérieur",
+    ],
+    cta: "Voir VIP+",
+    href: "/vip/vip-plus?duration=1m",
+  },
+];
 
 function getProfileName(profile: ProfileRow | null) {
   return String(profile?.username || "Membre");
@@ -68,47 +122,73 @@ function getProfileNameStyle(profile: ProfileRow | null) {
   };
 }
 
+function normalizeLevel(value?: string | null) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function isVipLevel(value?: string | null) {
-  const v = String(value || "").toLowerCase();
+  const v = normalizeLevel(value);
   return v !== "" && v !== "free" && v !== "standard";
 }
 
-function getItemCategory(item: ShopItemRow): CategoryFilter {
-  const category = String(item.category || "effect").toLowerCase();
-  if (category === "theme") return "theme";
-  if (category === "bundle") return "bundle";
-  if (category === "vip") return "vip";
+function normalizeCategory(raw?: string | null): Exclude<ShopFilter, "all"> {
+  const v = String(raw || "").trim().toLowerCase();
+
+  if (["theme", "themes"].includes(v)) return "theme";
+
+  if (["bundle", "bundles", "pack", "packs"].includes(v)) return "bundle";
+
+  if (
+    [
+      "effect",
+      "effects",
+      "effet",
+      "effets",
+      "fx",
+      "vip",
+      "vip_effect",
+      "vip-effects",
+    ].includes(v)
+  ) {
+    return "effect";
+  }
+
   return "effect";
 }
 
-function getItemTitle(item: ShopItemRow) {
+function itemCategory(item: ShopItemRow): Exclude<ShopFilter, "all"> {
+  return normalizeCategory(item.category);
+}
+
+function itemTitle(item: ShopItemRow) {
   return String(item.title || item.slug || "Item");
 }
 
-function getItemDescription(item: ShopItemRow) {
+function itemDescription(item: ShopItemRow) {
   return String(item.description || "Effet premium EtherCristal.");
 }
 
-function getItemBadge(item: ShopItemRow) {
+function itemBadge(item: ShopItemRow) {
   return String(item.badge || item.category || "Premium");
 }
 
-function isVipOnlyItem(item: ShopItemRow) {
-  return Boolean(item.metadata?.vip_only) || getItemCategory(item) === "vip";
+function isVipOnly(item: ShopItemRow) {
+  return Boolean(item.metadata?.vip_only);
 }
 
-function isUniqueItem(item: ShopItemRow) {
+function isUnique(item: ShopItemRow) {
   return Boolean(item.metadata?.unique);
 }
 
-function getVisualMood(item: ShopItemRow) {
+function visualTone(item: ShopItemRow) {
   const slug = String(item.slug || "").toLowerCase();
-  const category = getItemCategory(item);
+  const category = itemCategory(item);
 
-  if (category === "vip" || slug.includes("vip")) return "vip";
   if (slug.includes("gold") || slug.includes("ether")) return "gold";
   if (slug.includes("midnight") || slug.includes("dark")) return "dark";
-  if (slug.includes("cristal") || slug.includes("diamond")) return "cristal";
+  if (slug.includes("cristal") || slug.includes("diamond")) return "diamond";
+  if (slug.includes("desir") || slug.includes("rose")) return "rose";
+  if (category === "bundle") return "vip";
   return "default";
 }
 
@@ -116,14 +196,12 @@ export default function ShopPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [buyingSlug, setBuyingSlug] = useState("");
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [items, setItems] = useState<ShopItemRow[]>([]);
   const [inventory, setInventory] = useState<InventoryRow[]>([]);
-
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [search, setSearch] = useState("");
-
+  const [filter, setFilter] = useState<ShopFilter>("all");
+  const [buyingSlug, setBuyingSlug] = useState("");
   const [notice, setNotice] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -131,46 +209,100 @@ export default function ShopPage() {
     void loadPage();
   }, []);
 
+  async function ensureProfile(userId: string, fallbackUsername: string) {
+    const supabase = requireSupabaseBrowserClient();
+
+    const { data: profileData, error: profileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileError) {
+      throw new Error(profileError.message || "Impossible de charger le profil.");
+    }
+
+    if (profileData) return profileData as ProfileRow;
+
+    const payload = {
+      id: userId,
+      username: fallbackUsername || "Membre",
+      vip_level: "Standard",
+      ether_balance: 0,
+      is_verified: false,
+    };
+
+    const { error: upsertError } = await supabase
+      .from("profiles")
+      .upsert(payload, { onConflict: "id" });
+
+    if (upsertError) {
+      throw new Error(upsertError.message || "Impossible de créer le profil.");
+    }
+
+    const { data: createdProfile, error: createdError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (createdError) {
+      throw new Error(createdError.message || "Impossible de relire le profil.");
+    }
+
+    if (!createdProfile) {
+      throw new Error("Profil introuvable après création.");
+    }
+
+    return createdProfile as ProfileRow;
+  }
+
   async function loadPage() {
     setLoading(true);
     setNotice("");
     setErrorMsg("");
 
     try {
-      const supabase = getSupabaseBrowserClient();
-      const { data: auth } = await supabase.auth.getUser();
+      const supabase = requireSupabaseBrowserClient();
+      const { data: authData, error: authError } = await supabase.auth.getUser();
 
-      if (!auth.user) {
+      if (authError || !authData.user) {
         router.push("/login");
         return;
       }
 
-      const [{ data: profileData, error: profileError }, { data: itemRows, error: itemsError }, { data: invRows, error: invError }] =
+      const authUser = authData.user;
+      const fallbackUsername = String(
+        authUser.user_metadata?.username || authUser.email || "Membre"
+      )
+        .split("@")[0]
+        .slice(0, 24);
+
+      const ensuredProfile = await ensureProfile(authUser.id, fallbackUsername);
+
+      const [{ data: itemRows, error: itemError }, { data: invRows, error: invError }] =
         await Promise.all([
-          supabase.from("profiles").select("*").eq("id", auth.user.id).maybeSingle(),
-          supabase.from("shop_items").select("*").eq("is_active", true).order("created_at", { ascending: false }),
-          supabase.from("user_inventory").select("*").eq("user_id", auth.user.id).order("created_at", { ascending: false }),
+          supabase
+            .from("shop_items")
+            .select("*")
+            .eq("is_active", true)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("user_inventory")
+            .select("*")
+            .eq("user_id", authUser.id)
+            .order("created_at", { ascending: false }),
         ]);
 
-      if (profileError) {
-        setErrorMsg(profileError.message || "Impossible de charger le profil.");
-        setLoading(false);
-        return;
-      }
-
-      if (itemsError) {
-        setErrorMsg(itemsError.message || "Impossible de charger la boutique.");
-        setLoading(false);
-        return;
+      if (itemError) {
+        throw new Error(itemError.message || "Impossible de charger les items.");
       }
 
       if (invError) {
-        setErrorMsg(invError.message || "Impossible de charger l’inventaire.");
-        setLoading(false);
-        return;
+        throw new Error(invError.message || "Impossible de charger l’inventaire.");
       }
 
-      setProfile((profileData || null) as ProfileRow | null);
+      setProfile(ensuredProfile);
       setItems((itemRows || []) as ShopItemRow[]);
       setInventory((invRows || []) as InventoryRow[]);
     } catch (e: any) {
@@ -180,64 +312,23 @@ export default function ShopPage() {
     }
   }
 
-  const ownedMap = useMemo(() => {
-    const map: Record<string, InventoryRow[]> = {};
-    for (const item of inventory) {
-      const slug = String(item.item_slug || "");
-      if (!slug) continue;
-      if (!map[slug]) map[slug] = [];
-      map[slug].push(item);
-    }
-    return map;
-  }, [inventory]);
-
-  const activeInventory = useMemo(() => {
-    return inventory.filter((item) => item.is_active);
-  }, [inventory]);
-
-  const activeTypeMap = useMemo(() => {
-    const map: Record<string, InventoryRow> = {};
-    for (const item of activeInventory) {
-      const type = String(item.item_type || "effect").toLowerCase();
-      map[type] = item;
-    }
-    return map;
-  }, [activeInventory]);
-
-  const isVip = useMemo(() => isVipLevel(profile?.vip_level), [profile?.vip_level]);
-
-  const filteredItems = useMemo(() => {
-    const q = search.trim().toLowerCase();
-
-    return items.filter((item) => {
-      const category = getItemCategory(item);
-      const text = [
-        item.slug,
-        item.title,
-        item.description,
-        item.badge,
-        item.category,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      const categoryOk = categoryFilter === "all" ? true : category === categoryFilter;
-      const searchOk = !q ? true : text.includes(q);
-
-      return categoryOk && searchOk;
-    });
-  }, [items, categoryFilter, search]);
-
   async function refreshProfileAndInventory() {
     try {
-      const supabase = getSupabaseBrowserClient();
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) return;
+      const supabase = requireSupabaseBrowserClient();
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) return;
 
       const [{ data: profileData }, { data: invRows }] = await Promise.all([
-        supabase.from("profiles").select("*").eq("id", auth.user.id).maybeSingle(),
-        supabase.from("user_inventory").select("*").eq("user_id", auth.user.id).order("created_at", { ascending: false }),
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", authData.user.id)
+          .maybeSingle(),
+        supabase
+          .from("user_inventory")
+          .select("*")
+          .eq("user_id", authData.user.id)
+          .order("created_at", { ascending: false }),
       ]);
 
       setProfile((profileData || null) as ProfileRow | null);
@@ -245,33 +336,74 @@ export default function ShopPage() {
     } catch {}
   }
 
-  async function handleBuyWithEther(item: ShopItemRow) {
+  const ownedMap = useMemo(() => {
+    const map: Record<string, InventoryRow[]> = {};
+    for (const row of inventory) {
+      const slug = String(row.item_slug || "");
+      if (!slug) continue;
+      if (!map[slug]) map[slug] = [];
+      map[slug].push(row);
+    }
+    return map;
+  }, [inventory]);
+
+  const activeItems = useMemo(() => inventory.filter((row) => row.is_active), [inventory]);
+
+  const isVip = useMemo(() => isVipLevel(profile?.vip_level), [profile?.vip_level]);
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return items.filter((item) => {
+      const normalized = itemCategory(item);
+      const categoryOk = filter === "all" ? true : normalized === filter;
+
+      const text = [
+        item.slug,
+        item.title,
+        item.description,
+        item.badge,
+        item.category,
+        JSON.stringify(item.metadata || {}),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      const searchOk = !q ? true : text.includes(q);
+      const knownType = ["effect", "theme", "bundle"].includes(normalized);
+
+      return knownType && categoryOk && searchOk;
+    });
+  }, [items, search, filter]);
+
+  async function buyWithEther(item: ShopItemRow) {
     try {
       setBuyingSlug(item.slug);
       setNotice("");
       setErrorMsg("");
 
-      if (isVipOnlyItem(item) && !isVip) {
+      if (isVipOnly(item) && !isVip) {
         setErrorMsg("Cet item est réservé aux membres VIP.");
         return;
       }
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data, error } = await supabase.rpc("buy_shop_item_with_ether", {
         item_slug_input: item.slug,
       });
 
       if (error) {
-        setErrorMsg(error.message || "Impossible d’acheter cet item en Ether.");
+        setErrorMsg(error.message || "Impossible d’acheter cet item.");
         return;
       }
 
       if (!data?.ok) {
-        setErrorMsg(data?.error || "Achat Ether refusé.");
+        setErrorMsg(data?.error || "Achat refusé.");
         return;
       }
 
-      setNotice(`${getItemTitle(item)} ajouté à ton inventaire.`);
+      setNotice(`${itemTitle(item)} a été ajouté à ton inventaire.`);
       await refreshProfileAndInventory();
     } catch (e: any) {
       setErrorMsg(e?.message || "Erreur achat Ether.");
@@ -280,13 +412,13 @@ export default function ShopPage() {
     }
   }
 
-  async function handleBuyWithStripe(item: ShopItemRow) {
+  async function buyWithStripe(item: ShopItemRow) {
     try {
       setBuyingSlug(item.slug);
       setNotice("");
       setErrorMsg("");
 
-      if (isVipOnlyItem(item) && !isVip) {
+      if (isVipOnly(item) && !isVip) {
         setErrorMsg("Cet item est réservé aux membres VIP.");
         return;
       }
@@ -302,21 +434,21 @@ export default function ShopPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          priceName: getItemTitle(item),
+          priceName: itemTitle(item),
           amountUsd: Number(item.price_usd),
+          mode: "payment",
           metadata: {
             product_slug: item.slug,
             category: item.category || "effect",
             auto_equip: String(Boolean(item.metadata?.auto_equip)),
           },
-          mode: "payment",
         }),
       });
 
       const json = await res.json();
 
       if (!res.ok || !json?.url) {
-        setErrorMsg(json?.error || "Impossible de lancer le paiement Stripe.");
+        setErrorMsg(json?.error || "Impossible de lancer le paiement.");
         return;
       }
 
@@ -328,11 +460,11 @@ export default function ShopPage() {
     }
   }
 
-  function renderAction(item: ShopItemRow) {
+  function actionButton(item: ShopItemRow) {
     const owned = ownedMap[item.slug] || [];
     const alreadyOwned = owned.length > 0;
-    const unique = isUniqueItem(item);
-    const vipOnly = isVipOnlyItem(item);
+    const unique = isUnique(item);
+    const vipOnly = isVipOnly(item);
     const busy = buyingSlug === item.slug;
 
     if (vipOnly && !isVip) {
@@ -352,24 +484,24 @@ export default function ShopPage() {
     }
 
     return (
-      <div className="shop-cardActions">
+      <div className="shop-actionRow">
         {Number(item.price_ether || 0) > 0 ? (
           <button
             className="shop-btn gold"
             type="button"
             disabled={busy}
-            onClick={() => void handleBuyWithEther(item)}
+            onClick={() => void buyWithEther(item)}
           >
-            {busy ? "Achat..." : `Acheter ${Number(item.price_ether || 0)} Ξ`}
+            {busy ? "Achat..." : `${Number(item.price_ether || 0)} Ξ`}
           </button>
         ) : null}
 
         {Number(item.price_usd || 0) > 0 ? (
           <button
-            className="shop-btn vip"
+            className="shop-btn blue"
             type="button"
             disabled={busy}
-            onClick={() => void handleBuyWithStripe(item)}
+            onClick={() => void buyWithStripe(item)}
           >
             {busy ? "Ouverture..." : `$${Number(item.price_usd || 0).toFixed(2)}`}
           </button>
@@ -403,9 +535,9 @@ export default function ShopPage() {
         <header className="shop-topbar">
           <div>
             <div className="shop-kicker">Boutique EtherCristal</div>
-            <h1 className="shop-title">Effets, thèmes et premium</h1>
+            <h1 className="shop-title">Effets, thèmes, bundles et premium</h1>
             <p className="shop-subtitle">
-              Achète proprement, récupère tes items dans l’inventaire et équipe-les pour les voir partout.
+              Une boutique premium, cohérente et visuelle, pensée pour habiller ton profil et renforcer ton univers.
             </p>
           </div>
 
@@ -423,29 +555,33 @@ export default function ShopPage() {
         </header>
 
         <section className="shop-heroCard">
-          <div>
-            <div className="shop-statusLabel">Compte</div>
-            <div className="shop-statusName" style={getProfileNameStyle(profile)}>
+          <div className="shop-accountBlock">
+            <div className="shop-heroLabel">Compte</div>
+            <div className="shop-heroName" style={getProfileNameStyle(profile)}>
               {getProfileName(profile)}
             </div>
-            <div className="shop-statusMeta">
-              {isVip ? "VIP" : "Standard"}
+            <div className="shop-heroMeta">
+              {profile?.vip_level || "Standard"}
               {profile?.is_verified ? " • Vérifié" : ""}
             </div>
+
+            <p className="shop-heroText">
+              Achète des effets visuels, des thèmes et des bundles, puis équipe-les dans l’inventaire pour transformer ton identité sur tout le site.
+            </p>
           </div>
 
           <div className="shop-statPack">
-            <div className="shop-stat">
+            <div className="shop-statCard">
               <span>Ether</span>
               <strong>{Number(profile?.ether_balance || 0)} Ξ</strong>
             </div>
-            <div className="shop-stat">
+            <div className="shop-statCard">
               <span>Items possédés</span>
               <strong>{inventory.length}</strong>
             </div>
-            <div className="shop-stat">
+            <div className="shop-statCard">
               <span>Actifs</span>
-              <strong>{activeInventory.length}</strong>
+              <strong>{activeItems.length}</strong>
             </div>
           </div>
         </section>
@@ -453,81 +589,125 @@ export default function ShopPage() {
         {notice ? <div className="shop-notice">{notice}</div> : null}
         {errorMsg ? <div className="shop-error">{errorMsg}</div> : null}
 
-        <section className="shop-filters">
+        <section className="shop-section">
+          <div className="shop-sectionHeader">
+            <div>
+              <div className="shop-sectionKicker">Premium</div>
+              <h2 className="shop-sectionTitle vip">Accès VIP & VIP+</h2>
+            </div>
+          </div>
+
+          <div className="shop-premiumGrid">
+            {PREMIUM_CARDS.map((card) => (
+              <article key={card.id} className={`shop-premiumCard ${card.accent}`}>
+                <div className="shop-premiumGlow" />
+
+                <div className="shop-chipRow">
+                  <span className={`shop-chip ${card.accent === "diamond" ? "diamond" : "vip"}`}>
+                    {card.accent === "diamond" ? "VIP+" : "VIP"}
+                  </span>
+                </div>
+
+                <h3 className="shop-cardTitle">{card.title}</h3>
+                <div className="shop-premiumSubtitle">{card.subtitle}</div>
+                <p className="shop-cardText">{card.text}</p>
+
+                <div className="shop-premiumList">
+                  {card.features.map((feature) => (
+                    <div key={feature} className="shop-premiumItem">
+                      {feature}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="shop-cardActions">
+                  <button
+                    className={`shop-btn ${card.accent === "diamond" ? "blue" : "gold"}`}
+                    type="button"
+                    onClick={() => router.push(card.href)}
+                  >
+                    {card.cta}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="shop-filterBar">
           <input
             className="shop-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Chercher un item..."
+            placeholder="Chercher un effet, un thème ou un bundle..."
           />
 
           <div className="shop-pillRow">
-            {(["all", "effect", "theme", "bundle", "vip"] as CategoryFilter[]).map((value) => (
+            {FILTERS.map((value) => (
               <button
                 key={value}
                 type="button"
-                className={`shop-pill ${categoryFilter === value ? "active" : ""}`}
-                onClick={() => setCategoryFilter(value)}
+                className={`shop-pill ${filter === value ? "active" : ""}`}
+                onClick={() => setFilter(value)}
               >
-                {value}
+                {FILTER_LABELS[value]}
               </button>
             ))}
           </div>
         </section>
 
-        <section className="shop-grid">
+        <section className="shop-section">
+          <div className="shop-sectionHeader">
+            <div>
+              <div className="shop-sectionKicker">Catalogue</div>
+              <h2 className="shop-sectionTitle">Effets & thèmes</h2>
+            </div>
+          </div>
+
           {filteredItems.length > 0 ? (
-            filteredItems.map((item) => {
-              const owned = ownedMap[item.slug] || [];
-              const unique = isUniqueItem(item);
-              const vipOnly = isVipOnlyItem(item);
-              const mood = getVisualMood(item);
-              const currentActive = activeTypeMap[String(item.category || "effect").toLowerCase()];
-              const sameTypeEquipped = currentActive?.item_slug === item.slug;
+            <div className="shop-grid">
+              {filteredItems.map((item) => {
+                const tone = visualTone(item);
+                const owned = (ownedMap[item.slug] || []).length > 0;
 
-              return (
-                <article key={item.id} className={`shop-card ${mood}`}>
-                  <div className="shop-cardGlow" />
+                return (
+                  <article key={item.id} className={`shop-card ${tone}`}>
+                    <div className="shop-cardGlow" />
 
-                  <div className="shop-cardTop">
-                    <div className="shop-badgeRow">
-                      <span className="shop-badge">{getItemBadge(item)}</span>
-                      {vipOnly ? <span className="shop-badge vip">VIP</span> : null}
-                      {unique ? <span className="shop-badge soft">Unique</span> : null}
-                      {sameTypeEquipped ? <span className="shop-badge active">Actif</span> : null}
+                    <div className="shop-chipRow">
+                      <span className="shop-chip">{itemBadge(item)}</span>
+                      {owned ? <span className="shop-chip active">Possédé</span> : null}
+                      {isUnique(item) ? <span className="shop-chip soft">Unique</span> : null}
+                      {isVipOnly(item) ? <span className="shop-chip vip">VIP requis</span> : null}
                     </div>
-                  </div>
 
-                  <h2 className="shop-cardTitle">{getItemTitle(item)}</h2>
-                  <p className="shop-cardText">{getItemDescription(item)}</p>
+                    <h3 className="shop-cardTitle">{itemTitle(item)}</h3>
+                    <p className="shop-cardText">{itemDescription(item)}</p>
 
-                  <div className="shop-prices">
-                    <div className="shop-priceBox">
-                      <span>Ether</span>
-                      <strong>{Number(item.price_ether || 0)} Ξ</strong>
+                    <div className="shop-priceGrid">
+                      <div className="shop-priceBox">
+                        <span>Ether</span>
+                        <strong>{Number(item.price_ether || 0)} Ξ</strong>
+                      </div>
+                      <div className="shop-priceBox">
+                        <span>Stripe</span>
+                        <strong>
+                          {Number(item.price_usd || 0) > 0
+                            ? `$${Number(item.price_usd || 0).toFixed(2)}`
+                            : "—"}
+                        </strong>
+                      </div>
                     </div>
-                    <div className="shop-priceBox">
-                      <span>Stripe</span>
-                      <strong>
-                        {Number(item.price_usd || 0) > 0 ? `$${Number(item.price_usd || 0).toFixed(2)}` : "—"}
-                      </strong>
-                    </div>
-                  </div>
 
-                  <div className="shop-ownedInfo">
-                    {owned.length > 0 ? (
-                      <span className="shop-ownedTag">Déjà dans ton inventaire</span>
-                    ) : (
-                      <span className="shop-ownedTag muted">Pas encore possédé</span>
-                    )}
-                  </div>
-
-                  {renderAction(item)}
-                </article>
-              );
-            })
+                    <div className="shop-cardActions">{actionButton(item)}</div>
+                  </article>
+                );
+              })}
+            </div>
           ) : (
-            <div className="shop-empty">Aucun item trouvé.</div>
+            <div className="shop-emptyBox">
+              Aucun effet trouvé. Ajoute d’abord les items dans <code>shop_items</code>.
+            </div>
           )}
         </section>
       </div>
@@ -543,10 +723,9 @@ const css = `
   background:
     radial-gradient(circle at 20% 18%, rgba(212,175,55,0.08), transparent 28%),
     radial-gradient(circle at 82% 18%, rgba(130,20,50,0.16), transparent 28%),
-    linear-gradient(180deg,#0d0205 0%, #070205 52%, #030204 100%);
+    linear-gradient(180deg,#110007 0%, #070205 52%, #020103 100%);
   color:#fff;
 }
-
 .shop-bg{
   position:absolute;
   inset:0;
@@ -565,7 +744,6 @@ const css = `
   background-size:42px 42px;
   opacity:.18;
 }
-
 .shop-noise{
   position:absolute;
   inset:0;
@@ -575,7 +753,6 @@ const css = `
     radial-gradient(circle at 30% 30%, rgba(255,255,255,0.16) 0, transparent 22%),
     radial-gradient(circle at 70% 60%, rgba(255,255,255,0.10) 0, transparent 18%);
 }
-
 .shop-orb{
   position:absolute;
   border-radius:999px;
@@ -597,7 +774,6 @@ const css = `
   top:160px;
   background:rgba(180,30,60,0.22);
 }
-
 .shop-shell{
   position:relative;
   z-index:2;
@@ -605,7 +781,6 @@ const css = `
   margin:0 auto;
   padding:28px 20px 42px;
 }
-
 .shop-topbar{
   display:flex;
   justify-content:space-between;
@@ -613,7 +788,6 @@ const css = `
   flex-wrap:wrap;
   align-items:flex-start;
 }
-
 .shop-kicker{
   display:inline-flex;
   min-height:36px;
@@ -627,7 +801,6 @@ const css = `
   letter-spacing:.08em;
   text-transform:uppercase;
 }
-
 .shop-title{
   margin:16px 0 0;
   font-size:52px;
@@ -635,7 +808,6 @@ const css = `
   letter-spacing:-2px;
   font-weight:900;
 }
-
 .shop-subtitle{
   margin:14px 0 0;
   max-width:760px;
@@ -643,13 +815,11 @@ const css = `
   line-height:1.8;
   font-size:17px;
 }
-
 .shop-topActions{
   display:flex;
   gap:12px;
   flex-wrap:wrap;
 }
-
 .shop-navBtn{
   min-height:46px;
   padding:12px 18px;
@@ -666,7 +836,6 @@ const css = `
   color:#1a0014;
   border-color:transparent;
 }
-
 .shop-heroCard{
   margin-top:24px;
   display:flex;
@@ -675,61 +844,63 @@ const css = `
   align-items:center;
   flex-wrap:wrap;
   padding:22px;
-  border-radius:26px;
+  border-radius:28px;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)),
     rgba(255,255,255,0.03);
-  border:1px solid rgba(212,175,55,0.16);
-  backdrop-filter:blur(14px);
+  border:1px solid rgba(212,175,55,0.18);
+  backdrop-filter:blur(16px);
 }
-
-.shop-statusLabel{
+.shop-accountBlock{
+  max-width:760px;
+}
+.shop-heroLabel{
   font-size:12px;
   text-transform:uppercase;
   letter-spacing:.08em;
   color:rgba(255,255,255,0.56);
 }
-
-.shop-statusName{
+.shop-heroName{
   margin-top:8px;
-  font-size:32px;
+  font-size:36px;
   font-weight:900;
   line-height:1;
 }
-
-.shop-statusMeta{
+.shop-heroMeta{
   margin-top:8px;
   color:rgba(255,245,220,0.68);
   font-size:14px;
 }
-
+.shop-heroText{
+  margin-top:16px;
+  color:rgba(255,245,220,0.76);
+  line-height:1.8;
+}
 .shop-statPack{
   display:flex;
   gap:12px;
   flex-wrap:wrap;
 }
-
-.shop-stat{
+.shop-statCard{
   min-width:150px;
   padding:14px 16px;
   border-radius:18px;
   background:rgba(255,255,255,0.04);
   border:1px solid rgba(255,255,255,0.08);
 }
-.shop-stat span{
+.shop-statCard span{
   display:block;
   font-size:11px;
   text-transform:uppercase;
   letter-spacing:.08em;
   color:rgba(255,255,255,0.54);
 }
-.shop-stat strong{
+.shop-statCard strong{
   display:block;
   margin-top:8px;
   font-size:24px;
   color:#fff2cb;
 }
-
 .shop-notice,
 .shop-error{
   margin-top:18px;
@@ -746,13 +917,103 @@ const css = `
   border:1px solid rgba(255,47,67,0.18);
   color:#ffb1ba;
 }
-
-.shop-filters{
+.shop-section{
+  margin-top:30px;
+}
+.shop-sectionHeader{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  align-items:end;
+  flex-wrap:wrap;
+}
+.shop-sectionKicker{
+  display:inline-flex;
+  min-height:30px;
+  padding:6px 12px;
+  border-radius:999px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.10);
+  color:#fff1c4;
+  font-size:12px;
+  font-weight:800;
+}
+.shop-sectionTitle{
+  margin:14px 0 0;
+  font-size:38px;
+  line-height:1;
+  font-weight:900;
+}
+.shop-sectionTitle.vip{
+  background:linear-gradient(90deg,#fff0c2,#d4af37,#8ddcff);
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
+}
+.shop-premiumGrid{
+  margin-top:20px;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:18px;
+}
+.shop-premiumCard{
+  position:relative;
+  overflow:hidden;
+  border-radius:30px;
+  padding:24px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)),
+    rgba(255,255,255,0.03);
+  border:1px solid rgba(212,175,55,0.18);
+  backdrop-filter:blur(16px);
+  min-height:360px;
+  display:flex;
+  flex-direction:column;
+}
+.shop-premiumCard.gold{
+  border-color:rgba(212,175,55,0.26);
+}
+.shop-premiumCard.diamond{
+  border-color:rgba(88,176,255,0.24);
+}
+.shop-premiumGlow{
+  position:absolute;
+  width:220px;
+  height:220px;
+  right:-50px;
+  bottom:-50px;
+  border-radius:999px;
+  filter:blur(42px);
+  opacity:.18;
+}
+.shop-premiumCard.gold .shop-premiumGlow{
+  background:rgba(212,175,55,0.78);
+}
+.shop-premiumCard.diamond .shop-premiumGlow{
+  background:rgba(88,176,255,0.72);
+}
+.shop-premiumSubtitle{
+  margin-top:10px;
+  font-size:16px;
+  color:rgba(255,245,220,0.68);
+}
+.shop-premiumList{
+  margin-top:18px;
+  display:grid;
+  gap:10px;
+}
+.shop-premiumItem{
+  padding:12px 14px;
+  border-radius:16px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  color:rgba(255,245,220,0.78);
+}
+.shop-filterBar{
   margin-top:24px;
   display:grid;
   gap:14px;
 }
-
 .shop-search{
   width:100%;
   min-height:56px;
@@ -767,13 +1028,11 @@ const css = `
 .shop-search::placeholder{
   color:rgba(255,255,255,0.42);
 }
-
 .shop-pillRow{
   display:flex;
   gap:10px;
   flex-wrap:wrap;
 }
-
 .shop-pill{
   min-height:42px;
   padding:10px 14px;
@@ -790,14 +1049,12 @@ const css = `
   color:#1a0014;
   border-color:transparent;
 }
-
 .shop-grid{
-  margin-top:24px;
+  margin-top:20px;
   display:grid;
-  grid-template-columns:repeat(3, minmax(0, 1fr));
-  gap:20px;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:18px;
 }
-
 .shop-card{
   position:relative;
   overflow:hidden;
@@ -808,11 +1065,10 @@ const css = `
     rgba(255,255,255,0.03);
   border:1px solid rgba(212,175,55,0.16);
   backdrop-filter:blur(14px);
-  min-height:360px;
+  min-height:340px;
   display:flex;
   flex-direction:column;
 }
-
 .shop-cardGlow{
   position:absolute;
   width:180px;
@@ -823,75 +1079,64 @@ const css = `
   filter:blur(36px);
   opacity:.18;
 }
+.shop-card.default .shop-cardGlow{ background:rgba(255,120,90,0.45); }
 .shop-card.gold .shop-cardGlow{ background:rgba(212,175,55,0.75); }
 .shop-card.vip .shop-cardGlow{ background:rgba(174,92,255,0.65); }
 .shop-card.dark .shop-cardGlow{ background:rgba(85,110,255,0.60); }
-.shop-card.cristal .shop-cardGlow{ background:rgba(90,210,255,0.60); }
-.shop-card.default .shop-cardGlow{ background:rgba(255,120,90,0.45); }
-
-.shop-cardTop{
-  position:relative;
-  z-index:2;
-}
-
-.shop-badgeRow{
+.shop-card.diamond .shop-cardGlow{ background:rgba(90,210,255,0.60); }
+.shop-card.rose .shop-cardGlow{ background:rgba(216,92,114,0.60); }
+.shop-chipRow{
   display:flex;
   gap:8px;
   flex-wrap:wrap;
 }
-
-.shop-badge{
+.shop-chip{
   display:inline-flex;
-  min-height:32px;
-  padding:6px 12px;
+  min-height:30px;
+  padding:6px 10px;
   border-radius:999px;
   background:rgba(255,255,255,0.08);
   border:1px solid rgba(255,255,255,0.10);
   color:#fff2d3;
-  font-size:12px;
+  font-size:11px;
   font-weight:900;
 }
-.shop-badge.vip{
+.shop-chip.vip{
   background:rgba(139,92,246,0.16);
-  color:#eadcff;
   border-color:rgba(139,92,246,0.26);
+  color:#eadcff;
 }
-.shop-badge.soft{
-  background:rgba(255,255,255,0.08);
+.shop-chip.diamond{
+  background:rgba(88,176,255,0.16);
+  border-color:rgba(88,176,255,0.24);
+  color:#dff5ff;
 }
-.shop-badge.active{
+.shop-chip.active{
   background:rgba(47,143,88,0.16);
-  color:#b9ffd4;
   border-color:rgba(47,143,88,0.24);
+  color:#b9ffd4;
 }
-
+.shop-chip.soft{
+  background:rgba(255,255,255,0.06);
+}
 .shop-cardTitle{
-  position:relative;
-  z-index:2;
   margin:18px 0 0;
   font-size:28px;
   line-height:1;
   font-weight:900;
 }
-
 .shop-cardText{
-  position:relative;
-  z-index:2;
   margin:14px 0 0;
   color:rgba(255,245,220,0.72);
   line-height:1.75;
   min-height:74px;
 }
-
-.shop-prices{
-  position:relative;
-  z-index:2;
+.shop-priceGrid{
   margin-top:18px;
   display:grid;
   grid-template-columns:1fr 1fr;
   gap:12px;
 }
-
 .shop-priceBox{
   padding:14px;
   border-radius:18px;
@@ -911,40 +1156,15 @@ const css = `
   font-size:22px;
   color:#fff2cb;
 }
-
-.shop-ownedInfo{
-  position:relative;
-  z-index:2;
-  margin-top:16px;
-}
-
-.shop-ownedTag{
-  display:inline-flex;
-  min-height:34px;
-  padding:8px 12px;
-  border-radius:999px;
-  background:rgba(212,175,55,0.12);
-  border:1px solid rgba(212,175,55,0.18);
-  color:#fff1c4;
-  font-size:12px;
-  font-weight:800;
-}
-.shop-ownedTag.muted{
-  background:rgba(255,255,255,0.06);
-  border-color:rgba(255,255,255,0.10);
-  color:#ddd;
-}
-
 .shop-cardActions{
-  position:relative;
-  z-index:2;
   margin-top:auto;
+  padding-top:18px;
+}
+.shop-actionRow{
   display:flex;
   gap:10px;
   flex-wrap:wrap;
-  padding-top:18px;
 }
-
 .shop-btn{
   min-height:48px;
   padding:12px 16px;
@@ -957,24 +1177,23 @@ const css = `
   background:linear-gradient(90deg,#d4af37,#f0d48a);
   color:#1a0014;
 }
-.shop-btn.vip{
-  background:linear-gradient(90deg,#6b42b8,#9c6cff);
-  color:#fff;
+.shop-btn.blue{
+  background:linear-gradient(90deg,#3b82f6,#8ddcff);
+  color:#07131a;
 }
 .shop-btn.ghost{
   background:rgba(255,255,255,0.06);
   border:1px solid rgba(255,255,255,0.10);
   color:#fff;
 }
-
-.shop-empty{
-  padding:20px;
-  border-radius:20px;
+.shop-emptyBox{
+  margin-top:20px;
+  padding:18px;
+  border-radius:18px;
   background:rgba(255,255,255,0.03);
   border:1px solid rgba(255,255,255,0.06);
-  color:rgba(255,245,220,0.72);
+  color:rgba(255,245,220,0.74);
 }
-
 .shop-loading{
   height:100vh;
   display:flex;
@@ -993,32 +1212,33 @@ const css = `
 @keyframes spin{
   to{transform:rotate(360deg)}
 }
-
 @media (max-width: 1180px){
+  .shop-premiumGrid,
   .shop-grid{
     grid-template-columns:1fr 1fr;
   }
 }
-
-@media (max-width: 760px){
+@media (max-width: 820px){
   .shop-title{
     font-size:40px;
   }
-
-  .shop-subtitle{
-    font-size:16px;
-  }
-
+  .shop-premiumGrid,
   .shop-grid{
     grid-template-columns:1fr;
   }
-
+}
+@media (max-width: 560px){
+  .shop-title{
+    font-size:34px;
+  }
   .shop-statPack{
     width:100%;
   }
-
-  .shop-stat{
+  .shop-statCard{
     flex:1 1 100%;
+  }
+  .shop-heroName{
+    font-size:28px;
   }
 }
 `;

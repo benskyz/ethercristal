@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseBrowserClient } from "../../lib/supabase";
+import { requireSupabaseBrowserClient } from "../../lib/supabase";
 
 type ThemeMode = "gold" | "dark" | "velvet";
 type MatchPreference = "soft" | "vip" | "intense";
@@ -154,7 +154,7 @@ export default function OptionsPage() {
     setErrorMsg("");
 
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data: auth } = await supabase.auth.getUser();
 
       if (!auth.user) {
@@ -207,7 +207,7 @@ export default function OptionsPage() {
   }
 
   async function loadBlockedUsers(userId: string) {
-    const supabase = getSupabaseBrowserClient();
+    const supabase = requireSupabaseBrowserClient();
 
     const { data: blocks, error } = await supabase
       .from("user_blocks")
@@ -256,7 +256,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { error } = await supabase
         .from("profiles")
@@ -306,7 +306,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const redirectTo =
         typeof window !== "undefined"
@@ -332,7 +332,7 @@ export default function OptionsPage() {
 
   async function handleLogout() {
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       await supabase.auth.signOut();
       router.replace("/login");
     } catch {
@@ -359,7 +359,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const ext = file.name.split(".").pop() || "png";
       const path = `${myUserId}/avatar.${ext}`;
 
@@ -407,7 +407,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { error } = await supabase
         .from("profiles")
@@ -438,7 +438,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { data, error } = await supabase
         .from("profiles")
@@ -467,7 +467,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { error } = await supabase.from("user_blocks").insert({
         blocker_id: myUserId,
@@ -494,7 +494,7 @@ export default function OptionsPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { error } = await supabase
         .from("user_blocks")

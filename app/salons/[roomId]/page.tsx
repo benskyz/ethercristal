@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getSupabaseBrowserClient } from "../../../lib/supabase";
+import { requireSupabaseBrowserClient } from "../../../lib/supabase";
 
 type RoomRow = {
   id: string;
@@ -149,7 +149,7 @@ export default function SalonRoomPage() {
     setErrorMsg("");
 
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { data: authData, error: authError } = await supabase.auth.getUser();
 
@@ -209,7 +209,7 @@ export default function SalonRoomPage() {
   }
 
   function setupRealtime() {
-    const supabase = getSupabaseBrowserClient();
+    const supabase = requireSupabaseBrowserClient();
 
     const roomChannel = supabase
       .channel(`salon-room-${roomId}`)
@@ -246,7 +246,7 @@ export default function SalonRoomPage() {
 
   async function joinRoom(userId: string) {
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { data: existing } = await supabase
         .from("salon_room_members")
@@ -279,7 +279,7 @@ export default function SalonRoomPage() {
   async function leaveRoom() {
     try {
       if (!myUserId || !roomId) return;
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       await supabase
         .from("salon_room_members")
@@ -294,7 +294,7 @@ export default function SalonRoomPage() {
 
   async function loadMembers() {
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { data: memberRows, error } = await supabase
         .from("salon_room_members")
@@ -330,7 +330,7 @@ export default function SalonRoomPage() {
 
   async function loadMessages() {
     try {
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { data: rows, error } = await supabase
         .from("salon_messages")
@@ -400,7 +400,7 @@ export default function SalonRoomPage() {
       setNotice("");
       setErrorMsg("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const { error } = await supabase.from("salon_messages").insert({
         room_id: roomId,

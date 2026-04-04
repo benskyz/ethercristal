@@ -1,72 +1,65 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { supabase } from "../lib/supabase"
-
-type AuthUser = {
-  id: string
-  email?: string | null
-} | null
+import { useEffect, useState } from "react";
+import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
+import { requireSupabaseBrowserClient } from "../lib/supabase";
 
 export function useAuth() {
-  const [user, setUser] = useState<AuthUser>(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true
+    const supabase = requireSupabaseBrowserClient();
+    let mounted = true;
 
-    async function loadUser() {
-      const { data, error } = await supabase.auth.getUser()
+    async function initAuth() {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
 
-      if (!mounted) return
+        if (error) throw error;
+        if (!mounted) return;
 
-      if (error || !data.user) {
-        setUser(null)
-        setLoading(false)
-        return
+        setSession(session);
+        setUser(session?.user ?? null);
+      } catch (error) {
+        console.error("useAuth init error:", error);
+        if (!mounted) return;
+        setSession(null);
+        setUser(null);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-
-      setUser({
-        id: data.user.id,
-        email: data.user.email,
-      })
-      setLoading(false)
     }
 
-    loadUser()
+    void initAuth();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return
-
-      if (!session?.user) {
-        setUser(null)
-        setLoading(false)
-        return
+    } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: Session | null) => {
+        if (!mounted) return;
+        setSession(session);
+        setUser(session?.user ?? null);
+        setLoading(false);
       }
-
-      setUser({
-        id: session.user.id,
-        email: session.user.email,
-      })
-      setLoading(false)
-    })
+    );
 
     return () => {
-      mounted = false
-      subscription.unsubscribe()
-    }
-  }, [])
-
-  async function signOut() {
-    await supabase.auth.signOut()
-  }
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   return {
     user,
+    session,
     loading,
-    signOut,
     isAuthenticated: !!user,
-  }
+  };
 }

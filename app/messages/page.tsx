@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseBrowserClient } from "../../lib/supabase";
+import { requireSupabaseBrowserClient } from "../../lib/supabase";
 
 type ProfileRow = {
   id: string;
@@ -83,6 +83,7 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [searchingMembers, setSearchingMembers] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [userId, setUserId] = useState("");
   const [profilesMap, setProfilesMap] = useState<Record<string, ProfileRow>>({});
@@ -125,14 +126,17 @@ export default function MessagesPage() {
     setSelectedBlocked(blocked);
   }
 
-  async function loadMessagesPage() {
-    setLoading(true);
-    setNotice("");
-    setErrorMsg("");
+  async function loadMessagesPage(silent = false) {
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+      setNotice("");
+      setErrorMsg("");
+    }
 
     try {
-      const supabase = getSupabaseBrowserClient();
-
+      const supabase = requireSupabaseBrowserClient();
       const { data: authData, error: authError } = await supabase.auth.getUser();
 
       if (authError || !authData.user) {
@@ -151,7 +155,6 @@ export default function MessagesPage() {
 
       if (msgError) {
         setErrorMsg(msgError.message || "Impossible de charger les messages.");
-        setLoading(false);
         return;
       }
 
@@ -160,7 +163,9 @@ export default function MessagesPage() {
 
       const otherUserIds = Array.from(
         new Set(
-          nextMessages.map((m) => (m.from_user === me ? m.to_user : m.from_user)).filter(Boolean)
+          nextMessages
+            .map((m) => (m.from_user === me ? m.to_user : m.from_user))
+            .filter(Boolean)
         )
       );
 
@@ -180,13 +185,15 @@ export default function MessagesPage() {
       setProfilesMap(map);
 
       if (!selectedUserId) {
-        const firstConversationUserId = buildConversations(nextMessages, me, map)[0]?.userId || "";
+        const firstConversationUserId =
+          buildConversations(nextMessages, me, map)[0]?.userId || "";
         setSelectedUserId(firstConversationUserId);
       }
     } catch (e: any) {
       setErrorMsg(e?.message || "Erreur chargement messages.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -204,26 +211,28 @@ export default function MessagesPage() {
       grouped.get(otherId)!.push(msg);
     }
 
-    const conversations: ConversationItem[] = Array.from(grouped.entries()).map(([otherId, msgs]) => {
-      const sorted = [...msgs].sort((a, b) => {
-        const aTime = new Date(a.created_at || "").getTime();
-        const bTime = new Date(b.created_at || "").getTime();
-        return aTime - bTime;
-      });
+    const conversations: ConversationItem[] = Array.from(grouped.entries()).map(
+      ([otherId, msgs]) => {
+        const sorted = [...msgs].sort((a, b) => {
+          const aTime = new Date(a.created_at || "").getTime();
+          const bTime = new Date(b.created_at || "").getTime();
+          return aTime - bTime;
+        });
 
-      const lastMessage = sorted[sorted.length - 1] || null;
-      const unreadCount = sorted.filter(
-        (m) => m.to_user === me && !m.is_read
-      ).length;
+        const lastMessage = sorted[sorted.length - 1] || null;
+        const unreadCount = sorted.filter(
+          (m) => m.to_user === me && !m.is_read
+        ).length;
 
-      return {
-        userId: otherId,
-        profile: profileMap[otherId] || null,
-        messages: sorted,
-        lastMessage,
-        unreadCount,
-      };
-    });
+        return {
+          userId: otherId,
+          profile: profileMap[otherId] || null,
+          messages: sorted,
+          lastMessage,
+          unreadCount,
+        };
+      }
+    );
 
     conversations.sort((a, b) => {
       const aTime = new Date(a.lastMessage?.created_at || "").getTime();
@@ -237,14 +246,18 @@ export default function MessagesPage() {
   async function isBlockedWith(targetUserId: string) {
     if (!userId || !targetUserId) return false;
 
-    const supabase = getSupabaseBrowserClient();
-    const { data, error } = await supabase.rpc("users_blocked_either_way", {
-      user_a: userId,
-      user_b: targetUserId,
-    });
+    try {
+      const supabase = requireSupabaseBrowserClient();
+      const { data, error } = await supabase.rpc("users_blocked_either_way", {
+        user_a: userId,
+        user_b: targetUserId,
+      });
 
-    if (error) return false;
-    return Boolean(data);
+      if (error) return false;
+      return Boolean(data);
+    } catch {
+      return false;
+    }
   }
 
   const conversations = useMemo(
@@ -268,6 +281,10 @@ export default function MessagesPage() {
     [conversations, selectedUserId]
   );
 
+  const selectedProfile = useMemo(() => {
+    return selectedConversation?.profile || profilesMap[selectedUserId] || null;
+  }, [selectedConversation, profilesMap, selectedUserId]);
+
   useEffect(() => {
     if (!selectedConversation || !userId) return;
     void markConversationAsRead(selectedConversation);
@@ -281,7 +298,7 @@ export default function MessagesPage() {
 
       if (unreadIds.length === 0) return;
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { error } = await supabase
         .from("private_messages")
         .update({ is_read: true })
@@ -289,7 +306,9 @@ export default function MessagesPage() {
 
       if (!error) {
         setMessages((prev) =>
-          prev.map((m) => (unreadIds.includes(m.id) ? { ...m, is_read: true } : m))
+          prev.map((m) =>
+            unreadIds.includes(m.id) ? { ...m, is_read: true } : m
+          )
         );
       }
     } catch {}
@@ -308,11 +327,13 @@ export default function MessagesPage() {
 
       if (blocked) {
         setSelectedBlocked(true);
-        setErrorMsg("Impossible d’envoyer un message. Un blocage est actif entre vous.");
+        setErrorMsg(
+          "Impossible d’envoyer un message. Un blocage est actif entre vous."
+        );
         return;
       }
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
 
       const payload = {
         from_user: userId,
@@ -351,7 +372,7 @@ export default function MessagesPage() {
       setErrorMsg("");
       setNotice("");
 
-      const supabase = getSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
@@ -390,6 +411,7 @@ export default function MessagesPage() {
     setShowNewConversation(false);
     setMemberSearch("");
     setMemberResults([]);
+    setDraft("");
     setNotice("");
     setErrorMsg("");
   }
@@ -411,8 +433,8 @@ export default function MessagesPage() {
     return (
       <main className="messages-page">
         <style>{css}</style>
-        <div className="ec-loading-screen">
-          <div className="ec-loader" />
+        <div className="msg-loading">
+          <div className="msg-loader" />
         </div>
       </main>
     );
@@ -422,82 +444,100 @@ export default function MessagesPage() {
     <main className="messages-page">
       <style>{css}</style>
 
-      <div className="messages-bg messages-bg-a" />
-      <div className="messages-bg messages-bg-b" />
-      <div className="ec-grid-noise" />
-      <div className="ec-gold-orb messages-orb-a" />
-      <div className="ec-gold-orb messages-orb-b" />
+      <div className="msg-bg msg-bg-a" />
+      <div className="msg-bg msg-bg-b" />
+      <div className="msg-noise" />
+      <div className="msg-orb msg-orb-a" />
+      <div className="msg-orb msg-orb-b" />
 
-      <div className="ec-page-shell">
-        <header className="ec-header">
+      <div className="msg-shell">
+        <header className="msg-topbar">
           <div>
-            <div className="ec-kicker">Messages privés</div>
-            <h1 className="ec-title">Messagerie</h1>
-            <p className="ec-subtitle">
-              Conversations privées, propres et bloquées automatiquement si une relation est coupée.
+            <div className="msg-kicker">Messages privés</div>
+            <h1 className="msg-title">Messagerie</h1>
+            <p className="msg-subtitle">
+              Conversations privées, structurées, lisibles et prêtes à être
+              utilisées pour de vrai.
             </p>
           </div>
 
-          <div className="ec-sidecards">
-            <div className="ec-sidecard">
-              <span className="ec-sidecard-label">Conversations</span>
-              <strong>{conversations.length}</strong>
-            </div>
-            <div className="ec-sidecard">
-              <span className="ec-sidecard-label">Non lus</span>
-              <strong>{totalUnread}</strong>
-            </div>
-            <div className="ec-sidecard">
-              <span className="ec-sidecard-label">Actif</span>
-              <strong>{selectedConversation ? getProfileName(selectedConversation.profile) : "—"}</strong>
-            </div>
+          <div className="msg-topActions">
+            <button
+              className="msg-navBtn"
+              type="button"
+              onClick={() => void loadMessagesPage(true)}
+            >
+              {refreshing ? "Actualisation..." : "Actualiser"}
+            </button>
+            <button
+              className="msg-navBtn"
+              type="button"
+              onClick={() => router.push("/options")}
+            >
+              Options
+            </button>
+            <button
+              className="msg-navBtn gold"
+              type="button"
+              onClick={() => router.push("/dashboard")}
+            >
+              Retour
+            </button>
           </div>
         </header>
 
-        {notice ? <div className="ec-notice">{notice}</div> : null}
-        {errorMsg ? <div className="ec-error">{errorMsg}</div> : null}
+        <section className="msg-stats">
+          <div className="msg-statCard">
+            <span>Conversations</span>
+            <strong>{conversations.length}</strong>
+          </div>
+          <div className="msg-statCard">
+            <span>Non lus</span>
+            <strong>{totalUnread}</strong>
+          </div>
+          <div className="msg-statCard">
+            <span>Actif</span>
+            <strong>{selectedProfile ? getProfileName(selectedProfile) : "—"}</strong>
+          </div>
+        </section>
 
-        <section className="messages-layout ec-section">
-          <aside className="ec-card messages-sidebar">
-            <div className="ec-card-shine" />
-            <div className="messages-sidebarTop">
+        {notice ? <div className="msg-notice">{notice}</div> : null}
+        {errorMsg ? <div className="msg-error">{errorMsg}</div> : null}
+
+        <section className="msg-layout">
+          <aside className="msg-card msg-sidebar">
+            <div className="msg-cardShine" />
+
+            <div className="msg-cardHeader">
               <div>
-                <div className="ec-card-kicker">Conversations</div>
-                <h2 className="ec-card-title">Privé</h2>
+                <div className="msg-cardKicker">Conversations</div>
+                <h2 className="msg-cardTitle">Privé</h2>
               </div>
 
-              <div className="messages-sidebarActions">
+              <div className="msg-sideBtns">
                 <button
-                  className="ec-btn ec-btn-vip"
+                  className="msg-miniBtn violet"
                   onClick={() => setShowNewConversation((v) => !v)}
                   type="button"
                 >
                   Nouveau
                 </button>
-
-                <button
-                  className="ec-btn ec-btn-ghost"
-                  onClick={() => router.push("/dashboard")}
-                  type="button"
-                >
-                  Retour
-                </button>
               </div>
             </div>
 
             {showNewConversation ? (
-              <div className="messages-newConversationBox">
-                <div className="messages-newConversationTitle">Nouvelle conversation</div>
+              <div className="msg-newBox">
+                <div className="msg-newTitle">Démarrer une conversation</div>
 
-                <div className="messages-newConversationSearch">
+                <div className="msg-newSearch">
                   <input
-                    className="ec-input"
+                    className="msg-input"
                     value={memberSearch}
                     onChange={(e) => setMemberSearch(e.target.value)}
                     placeholder="Chercher un membre..."
                   />
                   <button
-                    className="ec-btn ec-btn-gold"
+                    className="msg-miniBtn gold"
                     onClick={() => void searchMembers()}
                     disabled={searchingMembers || !memberSearch.trim()}
                     type="button"
@@ -506,98 +546,104 @@ export default function MessagesPage() {
                   </button>
                 </div>
 
-                <div className="messages-memberResults">
+                <div className="msg-memberResults">
                   {memberResults.map((member) => (
                     <button
                       key={member.id}
-                      className="messages-memberResult"
+                      className="msg-memberResult"
                       onClick={() => openConversationWithProfile(member)}
                       type="button"
                     >
                       {member.avatar_url ? (
-                        <img src={member.avatar_url} alt={getProfileName(member)} className="messages-avatar" />
+                        <img
+                          src={member.avatar_url}
+                          alt={getProfileName(member)}
+                          className="msg-avatar"
+                        />
                       ) : (
-                        <div className="messages-avatar placeholder">
+                        <div className="msg-avatar placeholder">
                           {getProfileName(member).charAt(0).toUpperCase()}
                         </div>
                       )}
 
-                      <div className="messages-memberResultMain">
+                      <div className="msg-memberMain">
                         <div
-                          className="messages-conversationName"
+                          className="msg-memberName"
                           style={getProfileNameStyle(member)}
                         >
                           {getProfileName(member)}
                         </div>
-                        <p className="messages-memberMeta">
+                        <div className="msg-memberMeta">
                           {member.vip_level || "Standard"}
                           {member.is_verified ? " • Vérifié" : ""}
-                        </p>
+                        </div>
                       </div>
                     </button>
                   ))}
 
                   {memberSearch && memberResults.length === 0 && !searchingMembers ? (
-                    <div className="messages-emptyState">Aucun membre trouvable.</div>
+                    <div className="msg-emptyState">
+                      Aucun membre disponible.
+                    </div>
                   ) : null}
                 </div>
               </div>
             ) : null}
 
-            <div className="messages-searchWrap">
+            <div className="msg-searchWrap">
               <input
-                className="ec-input"
+                className="msg-input"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Chercher une conversation..."
               />
             </div>
 
-            <div className="messages-conversationList">
+            <div className="msg-conversationList">
               {filteredConversations.length > 0 ? (
                 filteredConversations.map((conv) => {
                   const active = conv.userId === selectedUserId;
                   return (
                     <button
                       key={conv.userId}
-                      className={`messages-conversationItem ${active ? "active" : ""}`}
+                      className={`msg-conversationItem ${active ? "active" : ""}`}
                       onClick={() => openConversation(conv.userId)}
                       type="button"
                     >
-                      <div className="messages-avatarWrap">
-                        {conv.profile?.avatar_url ? (
-                          <img
-                            src={conv.profile.avatar_url}
-                            alt={getProfileName(conv.profile)}
-                            className="messages-avatar"
-                          />
-                        ) : (
-                          <div className="messages-avatar placeholder">
-                            {getProfileName(conv.profile).charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
+                      {conv.profile?.avatar_url ? (
+                        <img
+                          src={conv.profile.avatar_url}
+                          alt={getProfileName(conv.profile)}
+                          className="msg-avatar"
+                        />
+                      ) : (
+                        <div className="msg-avatar placeholder">
+                          {getProfileName(conv.profile).charAt(0).toUpperCase()}
+                        </div>
+                      )}
 
-                      <div className="messages-conversationMain">
-                        <div className="messages-conversationTop">
+                      <div className="msg-conversationMain">
+                        <div className="msg-conversationTop">
                           <div
-                            className="messages-conversationName"
+                            className="msg-conversationName"
                             style={getProfileNameStyle(conv.profile)}
                           >
                             {getProfileName(conv.profile)}
                           </div>
-                          <span className="messages-time">
+                          <span className="msg-time">
                             {formatTime(conv.lastMessage?.created_at)}
                           </span>
                         </div>
 
-                        <div className="messages-conversationBottom">
-                          <p className="messages-lastSnippet">
+                        <div className="msg-conversationBottom">
+                          <p className="msg-lastSnippet">
                             {conv.lastMessage?.content || "Aucun message"}
                           </p>
 
                           {conv.unreadCount > 0 ? (
-                            <span className="messages-unreadBadge">{conv.unreadCount}</span>
+                            <span className="msg-unreadBadge">
+                              {conv.unreadCount}
+                            </span>
                           ) : null}
                         </div>
                       </div>
@@ -605,69 +651,72 @@ export default function MessagesPage() {
                   );
                 })
               ) : (
-                <div className="messages-emptyState">
+                <div className="msg-emptyState">
                   Aucune conversation trouvée.
                 </div>
               )}
             </div>
           </aside>
 
-          <section className="ec-card messages-mainPanel">
-            <div className="ec-card-shine" />
+          <section className="msg-card msg-thread">
+            <div className="msg-cardShine" />
 
-            {selectedConversation || selectedUserId ? (
+            {selectedUserId ? (
               <>
-                <div className="messages-threadHeader">
-                  <div className="messages-threadIdentity">
-                    {profilesMap[selectedUserId]?.avatar_url ? (
+                <div className="msg-threadHeader">
+                  <div className="msg-threadIdentity">
+                    {selectedProfile?.avatar_url ? (
                       <img
-                        src={profilesMap[selectedUserId].avatar_url!}
-                        alt={getProfileName(profilesMap[selectedUserId])}
-                        className="messages-threadAvatar"
+                        src={selectedProfile.avatar_url}
+                        alt={getProfileName(selectedProfile)}
+                        className="msg-threadAvatar"
                       />
                     ) : (
-                      <div className="messages-threadAvatar placeholder">
-                        {getProfileName(profilesMap[selectedUserId] || null).charAt(0).toUpperCase()}
+                      <div className="msg-threadAvatar placeholder">
+                        {getProfileName(selectedProfile).charAt(0).toUpperCase()}
                       </div>
                     )}
 
                     <div>
                       <div
-                        className="messages-threadName"
-                        style={getProfileNameStyle(profilesMap[selectedUserId] || null)}
+                        className="msg-threadName"
+                        style={getProfileNameStyle(selectedProfile)}
                       >
-                        {getProfileName(profilesMap[selectedUserId] || null)}
+                        {getProfileName(selectedProfile)}
                       </div>
-
-                      <div className="messages-threadMeta">
-                        {profilesMap[selectedUserId]?.vip_level || "Standard"}
-                        {profilesMap[selectedUserId]?.is_verified ? " • Vérifié" : ""}
+                      <div className="msg-threadMeta">
+                        {selectedProfile?.vip_level || "Standard"}
+                        {selectedProfile?.is_verified ? " • Vérifié" : ""}
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {selectedBlocked ? (
-                  <div className="messages-blockedBox">
-                    Un blocage est actif entre vous. Aucun nouveau message n’est possible.
+                  <div className="msg-blockedBox">
+                    Un blocage est actif entre vous. Aucun nouveau message n’est
+                    possible.
                   </div>
                 ) : null}
 
-                <div className="messages-threadBody">
+                <div className="msg-threadBody">
                   {selectedConversation?.messages?.length ? (
                     selectedConversation.messages.map((msg) => {
                       const mine = msg.from_user === userId;
+
                       return (
                         <div
                           key={msg.id}
-                          className={`messages-bubbleRow ${mine ? "mine" : "theirs"}`}
+                          className={`msg-bubbleRow ${mine ? "mine" : "theirs"}`}
                         >
-                          <div className={`messages-bubble ${mine ? "mine" : "theirs"}`}>
-                            <div className="messages-bubbleContent">{msg.content}</div>
-                            <div className="messages-bubbleMeta">
+                          <div
+                            className={`msg-bubble ${mine ? "mine" : "theirs"}`}
+                          >
+                            <div className="msg-bubbleContent">{msg.content}</div>
+                            <div className="msg-bubbleMeta">
                               {formatDateTime(msg.created_at)}
                               {mine ? (
-                                <span className="messages-readState">
+                                <span>
                                   {msg.is_read ? " • Lu" : " • Envoyé"}
                                 </span>
                               ) : null}
@@ -677,16 +726,18 @@ export default function MessagesPage() {
                       );
                     })
                   ) : (
-                    <div className="messages-threadStarter">
-                      Aucun message encore. Écris le premier.
+                    <div className="msg-threadStarter">
+                      Aucune conversation encore avec ce membre. Tu peux lancer
+                      le premier message.
                     </div>
                   )}
+
                   <div ref={bottomRef} />
                 </div>
 
-                <div className="messages-composeBar">
+                <div className="msg-compose">
                   <textarea
-                    className="ec-textarea messages-composeInput"
+                    className="msg-textarea"
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     placeholder={
@@ -697,9 +748,9 @@ export default function MessagesPage() {
                     disabled={selectedBlocked}
                   />
 
-                  <div className="messages-composeActions">
+                  <div className="msg-composeActions">
                     <button
-                      className="ec-btn ec-btn-gold"
+                      className="msg-mainBtn"
                       onClick={() => void handleSend()}
                       disabled={sending || !draft.trim() || selectedBlocked}
                       type="button"
@@ -710,17 +761,69 @@ export default function MessagesPage() {
                 </div>
               </>
             ) : (
-              <div className="messages-threadEmpty">
-                <div className="messages-threadEmptyInner">
-                  <div className="ec-card-kicker">Messagerie</div>
-                  <h2 className="ec-card-title">Aucune conversation sélectionnée</h2>
-                  <p className="ec-card-text">
-                    Choisis une conversation à gauche ou démarre-en une nouvelle.
+              <div className="msg-threadEmpty">
+                <div className="msg-threadEmptyInner">
+                  <div className="msg-cardKicker">Messagerie</div>
+                  <h2 className="msg-cardTitle big">
+                    Aucune conversation sélectionnée
+                  </h2>
+                  <p className="msg-threadEmptyText">
+                    Choisis une conversation à gauche ou démarre-en une nouvelle
+                    avec le bouton <strong>Nouveau</strong>.
                   </p>
                 </div>
               </div>
             )}
           </section>
+
+          <aside className="msg-card msg-sideinfo">
+            <div className="msg-cardShine" />
+
+            <div className="msg-cardKicker">Infos</div>
+            <h2 className="msg-cardTitle">Panneau rapide</h2>
+
+            <div className="msg-infoBlock">
+              <span>Statut</span>
+              <strong>{selectedProfile ? "Conversation ouverte" : "Aucune cible"}</strong>
+            </div>
+
+            <div className="msg-infoBlock">
+              <span>Nom</span>
+              <strong>{selectedProfile ? getProfileName(selectedProfile) : "—"}</strong>
+            </div>
+
+            <div className="msg-infoBlock">
+              <span>Rang</span>
+              <strong>{selectedProfile?.vip_level || "Standard"}</strong>
+            </div>
+
+            <div className="msg-infoBlock">
+              <span>Messages dans ce thread</span>
+              <strong>{selectedConversation?.messages?.length || 0}</strong>
+            </div>
+
+            <div className="msg-sideNote">
+              Les blocages se gèrent dans les options. Si un blocage est actif,
+              l’envoi est automatiquement coupé.
+            </div>
+
+            <div className="msg-sideActionCol">
+              <button
+                className="msg-miniBtn ghost"
+                type="button"
+                onClick={() => router.push("/options")}
+              >
+                Gérer les blocages
+              </button>
+              <button
+                className="msg-miniBtn ghost"
+                type="button"
+                onClick={() => router.push("/profile")}
+              >
+                Voir mon profil
+              </button>
+            </div>
+          </aside>
         </section>
       </div>
     </main>
@@ -732,97 +835,323 @@ const css = `
   min-height:100vh;
   position:relative;
   overflow:hidden;
-  background:linear-gradient(180deg,#100307 0%, #090205 42%, #050205 100%);
+  background:
+    radial-gradient(circle at 20% 18%, rgba(212,175,55,0.08), transparent 28%),
+    radial-gradient(circle at 82% 18%, rgba(130,20,50,0.16), transparent 28%),
+    linear-gradient(180deg,#0d0205 0%, #070205 52%, #030204 100%);
   color:#fff;
 }
 
-.messages-bg{
+.msg-bg{
   position:absolute;
   inset:0;
   pointer-events:none;
 }
-.messages-bg-a{
+.msg-bg-a{
   background:
-    radial-gradient(circle at 18% 18%, rgba(212,175,55,0.10), transparent 34%),
-    radial-gradient(circle at 80% 20%, rgba(255,170,40,0.06), transparent 28%),
-    radial-gradient(circle at 58% 76%, rgba(130,0,25,0.18), transparent 42%);
+    radial-gradient(circle at 35% 32%, rgba(255,255,255,0.025), transparent 18%),
+    radial-gradient(circle at 70% 72%, rgba(212,175,55,0.05), transparent 22%);
+  filter:blur(10px);
 }
-.messages-bg-b{
+.msg-bg-b{
   background:
-    radial-gradient(circle at 70% 55%, rgba(255,255,255,0.03), transparent 18%),
-    radial-gradient(circle at 35% 70%, rgba(212,175,55,0.07), transparent 24%);
-  filter:blur(8px);
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size:42px 42px;
+  opacity:.18;
 }
-
-.messages-orb-a{
-  width:180px;
-  height:180px;
-  left:180px;
-  top:80px;
-  background:rgba(212,175,55,0.55);
+.msg-noise{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  opacity:.03;
+  background-image:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,0.16) 0, transparent 22%),
+    radial-gradient(circle at 70% 60%, rgba(255,255,255,0.10) 0, transparent 18%);
 }
-.messages-orb-b{
+.msg-orb{
+  position:absolute;
+  border-radius:999px;
+  filter:blur(60px);
+  opacity:.16;
+  pointer-events:none;
+}
+.msg-orb-a{
   width:220px;
   height:220px;
-  right:120px;
-  top:180px;
-  background:rgba(255,140,60,0.24);
+  left:60px;
+  top:100px;
+  background:rgba(212,175,55,0.42);
+}
+.msg-orb-b{
+  width:260px;
+  height:260px;
+  right:80px;
+  top:160px;
+  background:rgba(180,30,60,0.22);
 }
 
-.messages-layout{
+.msg-shell{
+  position:relative;
+  z-index:2;
+  max-width:1460px;
+  margin:0 auto;
+  padding:28px 20px 42px;
+}
+
+.msg-topbar{
+  display:flex;
+  justify-content:space-between;
+  gap:18px;
+  flex-wrap:wrap;
+  align-items:flex-start;
+}
+
+.msg-kicker{
+  display:inline-flex;
+  min-height:36px;
+  padding:8px 14px;
+  border-radius:999px;
+  background:rgba(212,175,55,0.10);
+  color:#f6dc86;
+  border:1px solid rgba(212,175,55,0.18);
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+
+.msg-title{
+  margin:16px 0 0;
+  font-size:52px;
+  line-height:.95;
+  letter-spacing:-2px;
+  font-weight:900;
+}
+
+.msg-subtitle{
+  margin:14px 0 0;
+  max-width:760px;
+  color:rgba(255,245,220,0.72);
+  line-height:1.8;
+  font-size:17px;
+}
+
+.msg-topActions{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.msg-navBtn{
+  min-height:46px;
+  padding:12px 18px;
+  border:none;
+  border-radius:16px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.08);
+  color:#fff;
+  font-weight:800;
+  cursor:pointer;
+}
+.msg-navBtn.gold{
+  background:linear-gradient(90deg,#d4af37,#f0d48a);
+  color:#1a0014;
+  border-color:transparent;
+}
+
+.msg-stats{
+  margin-top:24px;
   display:grid;
-  grid-template-columns:380px 1fr;
-  gap:24px;
-  min-height:720px;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:14px;
 }
 
-.messages-sidebar{
+.msg-statCard{
+  padding:18px;
+  border-radius:22px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(212,175,55,0.14);
+}
+.msg-statCard span{
+  display:block;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  color:rgba(255,255,255,0.54);
+}
+.msg-statCard strong{
+  display:block;
+  margin-top:10px;
+  font-size:28px;
+  color:#fff2cb;
+}
+
+.msg-notice,
+.msg-error{
+  margin-top:18px;
+  padding:14px 16px;
+  border-radius:18px;
+}
+.msg-notice{
+  background:rgba(212,175,55,0.10);
+  border:1px solid rgba(212,175,55,0.18);
+  color:#fff1c4;
+}
+.msg-error{
+  background:rgba(255,47,67,0.10);
+  border:1px solid rgba(255,47,67,0.18);
+  color:#ffb1ba;
+}
+
+.msg-layout{
+  margin-top:24px;
+  display:grid;
+  grid-template-columns:360px 1fr 280px;
+  gap:20px;
+}
+
+.msg-card{
+  position:relative;
+  overflow:hidden;
+  border-radius:28px;
+  padding:20px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
+    rgba(255,255,255,0.03);
+  border:1px solid rgba(212,175,55,0.16);
+  backdrop-filter:blur(14px);
+  min-height:620px;
   display:flex;
   flex-direction:column;
-  min-height:720px;
 }
 
-.messages-sidebarTop{
+.msg-cardShine{
+  position:absolute;
+  inset:0;
+  background:linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.07) 18%, transparent 34%);
+  transform:translateX(-120%);
+  animation:msgShine 7s linear infinite;
+  pointer-events:none;
+}
+@keyframes msgShine{
+  0%{transform:translateX(-120%)}
+  30%{transform:translateX(120%)}
+  100%{transform:translateX(120%)}
+}
+
+.msg-cardHeader{
   display:flex;
   justify-content:space-between;
   gap:12px;
   align-items:flex-start;
   flex-wrap:wrap;
 }
-
-.messages-sidebarActions{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
+.msg-cardKicker{
+  display:inline-flex;
+  min-height:30px;
+  padding:6px 12px;
+  border-radius:999px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.10);
+  color:#fff1c4;
+  font-size:12px;
+  font-weight:800;
+}
+.msg-cardTitle{
+  margin:14px 0 0;
+  font-size:34px;
+  line-height:1;
+  letter-spacing:-1px;
+  font-weight:900;
+}
+.msg-cardTitle.big{
+  font-size:42px;
 }
 
-.messages-newConversationBox{
+.msg-sideBtns{
+  display:flex;
+  gap:8px;
+}
+
+.msg-miniBtn,
+.msg-mainBtn{
+  border:none;
+  border-radius:16px;
+  font-weight:900;
+  cursor:pointer;
+}
+.msg-miniBtn{
+  min-height:42px;
+  padding:10px 14px;
+}
+.msg-mainBtn{
+  min-height:54px;
+  padding:12px 18px;
+}
+.msg-miniBtn.violet{
+  background:linear-gradient(90deg,#6b42b8,#9c6cff);
+  color:#fff;
+}
+.msg-miniBtn.gold,
+.msg-mainBtn{
+  background:linear-gradient(90deg,#d4af37,#f0d48a);
+  color:#1a0014;
+}
+.msg-miniBtn.ghost{
+  background:rgba(255,255,255,0.06);
+  color:#fff;
+  border:1px solid rgba(255,255,255,0.10);
+}
+
+.msg-newBox{
   margin-top:18px;
   padding:14px;
   border-radius:18px;
   background:rgba(255,255,255,0.04);
   border:1px solid rgba(255,255,255,0.08);
 }
-
-.messages-newConversationTitle{
+.msg-newTitle{
   font-weight:900;
   margin-bottom:12px;
 }
-
-.messages-newConversationSearch{
+.msg-newSearch{
   display:grid;
   grid-template-columns:1fr auto;
   gap:10px;
 }
 
-.messages-memberResults{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  margin-top:12px;
+.msg-input,
+.msg-textarea{
+  width:100%;
+  border:none;
+  outline:none;
+  border-radius:18px;
+  background:rgba(255,255,255,0.06);
+  color:#fff;
+  border:1px solid rgba(255,255,255,0.08);
+}
+.msg-input{
+  min-height:54px;
+  padding:0 16px;
+}
+.msg-input::placeholder,
+.msg-textarea::placeholder{
+  color:rgba(255,255,255,0.42);
+}
+.msg-textarea{
+  min-height:120px;
+  padding:14px 16px;
+  resize:vertical;
 }
 
-.messages-memberResult{
+.msg-memberResults{
+  margin-top:12px;
+  display:grid;
+  gap:10px;
+}
+
+.msg-memberResult{
   border:none;
   background:rgba(255,255,255,0.04);
   border:1px solid rgba(255,255,255,0.08);
@@ -833,27 +1162,33 @@ const css = `
   text-align:left;
   cursor:pointer;
 }
-
-.messages-memberMeta{
-  margin:4px 0 0;
+.msg-memberMain{
+  min-width:0;
+}
+.msg-memberName{
+  font-size:15px;
+  font-weight:900;
+}
+.msg-memberMeta{
+  margin-top:4px;
   color:rgba(255,245,220,0.64);
   font-size:12px;
 }
 
-.messages-searchWrap{
+.msg-searchWrap{
   margin-top:18px;
 }
 
-.messages-conversationList{
+.msg-conversationList{
+  margin-top:18px;
   display:flex;
   flex-direction:column;
   gap:10px;
-  margin-top:18px;
   overflow:auto;
   padding-right:4px;
 }
 
-.messages-conversationItem{
+.msg-conversationItem{
   width:100%;
   border:none;
   background:rgba(255,255,255,0.04);
@@ -866,32 +1201,25 @@ const css = `
   cursor:pointer;
   transition:all .22s ease;
 }
-
-.messages-conversationItem:hover{
+.msg-conversationItem:hover{
   transform:translateY(-1px);
   border-color:rgba(212,175,55,0.18);
 }
-
-.messages-conversationItem.active{
+.msg-conversationItem.active{
   background:rgba(212,175,55,0.08);
   border-color:rgba(212,175,55,0.26);
 }
 
-.messages-avatarWrap{
-  flex-shrink:0;
-}
-
-.messages-avatar,
-.messages-threadAvatar{
+.msg-avatar,
+.msg-threadAvatar{
   width:52px;
   height:52px;
   border-radius:16px;
   object-fit:cover;
   border:1px solid rgba(255,255,255,0.10);
 }
-
-.messages-avatar.placeholder,
-.messages-threadAvatar.placeholder{
+.msg-avatar.placeholder,
+.msg-threadAvatar.placeholder{
   width:52px;
   height:52px;
   border-radius:16px;
@@ -904,39 +1232,34 @@ const css = `
   border:1px solid rgba(255,255,255,0.10);
 }
 
-.messages-conversationMain{
+.msg-conversationMain{
   min-width:0;
   flex:1;
 }
-
-.messages-conversationTop{
+.msg-conversationTop{
   display:flex;
   justify-content:space-between;
   gap:10px;
   align-items:flex-start;
 }
-
-.messages-conversationName{
+.msg-conversationName{
   font-size:16px;
   font-weight:900;
   line-height:1.1;
 }
-
-.messages-time{
+.msg-time{
   font-size:12px;
   color:rgba(255,255,255,0.56);
   white-space:nowrap;
 }
-
-.messages-conversationBottom{
+.msg-conversationBottom{
   display:flex;
   justify-content:space-between;
   gap:10px;
   align-items:center;
   margin-top:8px;
 }
-
-.messages-lastSnippet{
+.msg-lastSnippet{
   margin:0;
   color:rgba(255,245,220,0.68);
   line-height:1.5;
@@ -945,8 +1268,7 @@ const css = `
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-
-.messages-unreadBadge{
+.msg-unreadBadge{
   min-width:24px;
   height:24px;
   padding:0 8px;
@@ -960,44 +1282,26 @@ const css = `
   font-weight:900;
 }
 
-.messages-emptyState{
-  padding:16px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.03);
-  border:1px solid rgba(255,255,255,0.06);
-  color:rgba(255,245,220,0.74);
-}
-
-.messages-mainPanel{
-  display:flex;
-  flex-direction:column;
-  min-height:720px;
-}
-
-.messages-threadHeader{
+.msg-threadHeader{
   padding-bottom:18px;
   border-bottom:1px solid rgba(255,255,255,0.08);
 }
-
-.messages-threadIdentity{
+.msg-threadIdentity{
   display:flex;
   gap:14px;
   align-items:center;
 }
-
-.messages-threadName{
+.msg-threadName{
   font-size:24px;
   font-weight:900;
   line-height:1;
 }
-
-.messages-threadMeta{
+.msg-threadMeta{
   margin-top:6px;
   color:rgba(255,245,220,0.64);
   font-size:13px;
 }
-
-.messages-blockedBox{
+.msg-blockedBox{
   margin-top:16px;
   padding:14px 16px;
   border-radius:18px;
@@ -1005,8 +1309,7 @@ const css = `
   border:1px solid rgba(255,47,67,0.18);
   color:#ffb1ba;
 }
-
-.messages-threadBody{
+.msg-threadBody{
   flex:1;
   overflow:auto;
   padding:18px 2px;
@@ -1014,98 +1317,162 @@ const css = `
   flex-direction:column;
   gap:12px;
 }
-
-.messages-bubbleRow{
+.msg-bubbleRow{
   display:flex;
 }
-.messages-bubbleRow.mine{
+.msg-bubbleRow.mine{
   justify-content:flex-end;
 }
-.messages-bubbleRow.theirs{
+.msg-bubbleRow.theirs{
   justify-content:flex-start;
 }
-
-.messages-bubble{
-  max-width:72%;
+.msg-bubble{
+  max-width:74%;
   padding:14px 16px;
   border-radius:20px;
   border:1px solid rgba(255,255,255,0.08);
 }
-.messages-bubble.mine{
+.msg-bubble.mine{
   background:linear-gradient(90deg,#d4af37,#f0d48a);
   color:#1a0014;
 }
-.messages-bubble.theirs{
+.msg-bubble.theirs{
   background:rgba(255,255,255,0.05);
   color:#fff;
 }
-
-.messages-bubbleContent{
+.msg-bubbleContent{
   line-height:1.7;
   white-space:pre-wrap;
   word-break:break-word;
 }
-
-.messages-bubbleMeta{
+.msg-bubbleMeta{
   margin-top:8px;
   font-size:11px;
   opacity:.74;
 }
-
-.messages-threadStarter{
+.msg-threadStarter,
+.msg-emptyState{
   padding:16px;
   border-radius:18px;
   background:rgba(255,255,255,0.03);
   border:1px solid rgba(255,255,255,0.06);
   color:rgba(255,245,220,0.74);
 }
-
-.messages-composeBar{
+.msg-compose{
   padding-top:18px;
   border-top:1px solid rgba(255,255,255,0.08);
 }
-
-.messages-composeInput{
-  min-height:120px;
-}
-
-.messages-composeActions{
+.msg-composeActions{
   margin-top:12px;
   display:flex;
   justify-content:flex-end;
-  gap:12px;
 }
-
-.messages-threadEmpty{
+.msg-threadEmpty{
   flex:1;
   display:flex;
   align-items:center;
   justify-content:center;
 }
-
-.messages-threadEmptyInner{
+.msg-threadEmptyInner{
   max-width:420px;
   text-align:center;
 }
+.msg-threadEmptyText{
+  margin-top:14px;
+  line-height:1.8;
+  color:rgba(255,245,220,0.72);
+}
 
-@media (max-width: 980px){
-  .messages-layout{
-    grid-template-columns:1fr;
+.msg-sideinfo{
+  gap:14px;
+}
+.msg-infoBlock{
+  padding:14px 16px;
+  border-radius:18px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+}
+.msg-infoBlock span{
+  display:block;
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  color:rgba(255,255,255,0.54);
+}
+.msg-infoBlock strong{
+  display:block;
+  margin-top:8px;
+  font-size:18px;
+  color:#fff2cb;
+}
+.msg-sideNote{
+  padding:14px 16px;
+  border-radius:18px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  color:rgba(255,245,220,0.72);
+  line-height:1.7;
+}
+.msg-sideActionCol{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.msg-loading{
+  height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#0a0005;
+}
+.msg-loader{
+  width:64px;
+  height:64px;
+  border:6px solid rgba(212,175,55,0.2);
+  border-top:6px solid #d4af37;
+  border-radius:50%;
+  animation:spin 1.3s linear infinite;
+}
+@keyframes spin{
+  to{transform:rotate(360deg)}
+}
+
+@media (max-width: 1180px){
+  .msg-layout{
+    grid-template-columns:320px 1fr;
   }
-
-  .messages-sidebar,
-  .messages-mainPanel{
-    min-height:unset;
+  .msg-sideinfo{
+    grid-column:1 / -1;
+    min-height:auto;
   }
 }
 
-@media (max-width: 760px){
-  .messages-newConversationSearch{
+@media (max-width: 860px){
+  .msg-layout{
     grid-template-columns:1fr;
   }
 
-  .messages-bubble{
-    max-width:88%;
+  .msg-card{
+    min-height:auto;
+  }
+
+  .msg-stats{
+    grid-template-columns:1fr;
+  }
+
+  .msg-newSearch{
+    grid-template-columns:1fr;
+  }
+}
+
+@media (max-width: 560px){
+  .msg-title{
+    font-size:38px;
+  }
+
+  .msg-bubble{
+    max-width:90%;
   }
 }
 `;

@@ -1,9 +1,27 @@
 "use client";
 
-import { supabase } from "./supabase";
+import { requireSupabaseBrowserClient } from "./supabase";
 
 export async function requireAuth() {
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) return null;
-  return data.user;
+  const supabase = requireSupabaseBrowserClient();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return { user: null, profile: null };
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  return {
+    user,
+    profile: profile ?? null,
+  };
 }

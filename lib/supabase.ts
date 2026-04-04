@@ -1,17 +1,23 @@
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+"use client";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-let supabaseInstance: SupabaseClient | null = null;
+let browserClient: SupabaseClient | null = null;
 
-export function getSupabaseBrowserClient() {
-  if (!supabaseUrl || !supabaseAnonKey) {
+export function requireSupabaseBrowserClient(): SupabaseClient {
+  if (typeof window === "undefined") {
+    throw new Error("Supabase appelé côté serveur.");
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !anon) {
     throw new Error("Variables Supabase publiques manquantes.");
   }
 
-  if (!supabaseInstance) {
-    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+  if (!browserClient) {
+    browserClient = createClient(url, anon, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -20,16 +26,9 @@ export function getSupabaseBrowserClient() {
     });
   }
 
-  return supabaseInstance;
+  return browserClient;
 }
 
-export const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-        },
-      })
-    : (null as unknown as SupabaseClient);
+export function getSupabaseBrowserClient(): SupabaseClient {
+  return requireSupabaseBrowserClient();
+}

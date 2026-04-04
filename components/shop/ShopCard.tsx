@@ -1,12 +1,6 @@
 import { CSSProperties } from "react";
 import { ShopItem } from "./shop-types";
-import {
-  buildEffectTitleStyle,
-  buildMiniPreviewStyle,
-  getRarityClass,
-  getRarityLabel,
-  getScopeLabel,
-} from "./shop-utils";
+import { buildEffectTitleStyle, buildMiniPreviewStyle, getRarityClass, getRarityLabel, getScopeLabel } from "./shop-utils";
 
 type Props = {
   item: ShopItem;

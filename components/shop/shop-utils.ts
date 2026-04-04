@@ -1,13 +1,5 @@
 import { CSSProperties } from "react";
-import {
-  InventoryRow,
-  ProfileRow,
-  ShopCategory,
-  ShopItem,
-  ShopRarity,
-  ShopScope,
-  SortMode,
-} from "./shop-types";
+import { InventoryRow, ProfileRow, ShopCategory, ShopItem, ShopRarity, ShopScope, SortMode } from "./shop-types";
 
 export const FALLBACK_ITEMS: ShopItem[] = [
   {

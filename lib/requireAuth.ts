@@ -1,27 +1,42 @@
-"use client";
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
-import { requireSupabaseBrowserClient } from "./supabase";
+const supabase = requireSupabaseBrowserClient();
 
-export async function requireAuth() {
-  const supabase = requireSupabaseBrowserClient();
-
+export async function getCurrentUser() {
   const {
     data: { user },
     error,
   } = await supabase.auth.getUser();
 
-  if (error || !user) {
-    return { user: null, profile: null };
+  if (error) {
+    throw error;
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .maybeSingle();
+  return user;
+}
 
-  return {
-    user,
-    profile: profile ?? null,
-  };
+export async function getCurrentProfile() {
+  const user = await getCurrentUser();
+
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, pseudo, email, credits, is_vip, is_admin, is_banned, role")
+    .eq("id", user.id)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function isCurrentUserAdmin() {
+  const profile = await getCurrentProfile();
+
+  if (!profile) return false;
+
+  return Boolean(profile.is_admin || profile.role === "admin");
 }

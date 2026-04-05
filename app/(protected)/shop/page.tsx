@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { requireSupabaseBrowserClient } from "../../lib/supabase";
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
 type ProfileRow = {
   id: string;

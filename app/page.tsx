@@ -1,463 +1,171 @@
-import Link from "next/link";
+"use client";
+
+import { useRouter } from "next/navigation";
 
 export default function HomePage() {
+  const router = useRouter();
+
   return (
-    <main className="ec-entry">
-      <style>{css}</style>
+    <div className="relative min-h-screen overflow-hidden bg-[#050507] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,70,120,0.16),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(255,170,60,0.10),transparent_30%),linear-gradient(to_bottom,#050507,#08070b_45%,#050507)]" />
+      <div className="absolute inset-0 opacity-[0.05] [background-image:linear-gradient(rgba(255,255,255,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.08)_1px,transparent_1px)] [background-size:30px_30px]" />
 
-      <div className="ec-grid" />
-      <div className="ec-noise" />
-
-      <div className="ec-smoke ec-smoke-a" />
-      <div className="ec-smoke ec-smoke-b" />
-      <div className="ec-smoke ec-smoke-c" />
-
-      <div className="ec-glow ec-glow-red" />
-      <div className="ec-glow ec-glow-gold" />
-      <div className="ec-glow ec-glow-white" />
-
-      <section className="ec-shell">
-        <div className="ec-topBadge">
-          <span>💎</span>
-          <span>Accès privé réservé aux adultes</span>
-        </div>
-
-        <div className="ec-logoWrap">
-          <div className="ec-logoGem">◆</div>
-          <h1 className="ec-logoText">EtherCristal</h1>
-          <div className="ec-logoShine" />
-        </div>
-
-        <div className="ec-mainCard">
-          <h2 className="ec-title">Un espace fermé. Une entrée assumée.</h2>
-
-          <p className="ec-lead">
-            EtherCristal est une plateforme privée 18+ pensée comme une porte
-            d’entrée vers un univers plus sombre, plus élégant et plus exclusif.
-          </p>
-
-          <div className="ec-textBlock">
-            <p>
-              Ici, rien n’est exposé avant la connexion. L’expérience commence
-              par l’atmosphère, par le seuil, par la décision d’entrer.
-            </p>
-
-            <p>
-              L’identité visuelle repose sur un mélange de noir profond, de rouge
-              néon, de gold lumineux et de reflets cristal pour créer une
-              présence forte, adulte et soignée.
-            </p>
-
-            <p>
-              L’accès au reste de l’univers se fait uniquement après
-              authentification. Cette page n’est pas une vitrine. C’est
-              l’introduction.
-            </p>
-          </div>
-
-          <div className="ec-infoGrid">
-            <div className="ec-infoCard">
-              <span>Accès</span>
-              <strong>Connexion requise</strong>
+      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-8 sm:px-6 lg:px-8">
+        <header className="flex items-center justify-between rounded-[28px] border border-white/10 bg-white/[0.04] px-5 py-4 backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/5 text-xl shadow-[0_0_30px_rgba(255,80,120,0.15)]">
+              💎
             </div>
-
-            <div className="ec-infoCard">
-              <span>Entrée</span>
-              <strong>Réservée aux membres</strong>
-            </div>
-
-            <div className="ec-infoCard">
-              <span>Cadre</span>
-              <strong>Privé • 18+ • Québec</strong>
+            <div>
+              <p className="text-lg font-black leading-none text-white">EtherCristal</p>
+              <p className="mt-1 text-[10px] uppercase tracking-[0.28em] text-white/35">
+                accès privé
+              </p>
             </div>
           </div>
 
-          <div className="ec-actions">
-            <Link href="/login" className="ec-btn ec-btn-primary">
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/enter")}
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/10"
+            >
+              Connexion
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push("/enter")}
+              className="rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2.5 text-sm font-black text-black transition hover:opacity-95"
+            >
               Entrer
-            </Link>
-
-            <Link href="/register" className="ec-btn ec-btn-secondary">
-              Créer un compte
-            </Link>
+            </button>
           </div>
+        </header>
 
-          <p className="ec-footnote">
-            L’univers complet devient accessible après connexion.
-          </p>
-        </div>
-      </section>
-    </main>
+        <main className="flex flex-1 items-center">
+          <div className="grid w-full gap-10 py-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+            <section>
+              <div className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
+                Univers privé • 18+ • premium
+              </div>
+
+              <h1 className="mt-6 max-w-4xl text-4xl font-black leading-[0.98] tracking-tight text-white sm:text-6xl">
+                Une entrée plus adulte,
+                <span className="bg-gradient-to-r from-rose-500 via-amber-300 to-white bg-clip-text text-transparent">
+                  {" "}plus propre,{" "}
+                </span>
+                plus immersive.
+              </h1>
+
+              <p className="mt-6 max-w-2xl text-base leading-8 text-white/62 sm:text-lg">
+                EtherCristal rassemble salons privés, effets visuels, profils premium, inventaire,
+                boutique et accès réservés dans une seule identité forte. Rien de cheap, rien de
+                brouillon. Juste une ambiance sombre, nette et exclusive.
+              </p>
+
+              <div className="mt-8 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => router.push("/enter")}
+                  className="rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3.5 text-sm font-black text-black transition hover:opacity-95"
+                >
+                  Accéder à l’espace privé
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push("/salons")}
+                  className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3.5 text-sm font-bold text-white transition hover:bg-white/10"
+                >
+                  Voir l’univers
+                </button>
+              </div>
+
+              <div className="mt-10 grid gap-4 sm:grid-cols-3">
+                <LandingCard
+                  title="Salons privés"
+                  desc="Des espaces directs, plus propres et plus immersifs."
+                />
+                <LandingCard
+                  title="Effets premium"
+                  desc="Boutique, inventaire, équipements et ambiance visuelle."
+                />
+                <LandingCard
+                  title="Accès VIP"
+                  desc="Des zones réservées et une identité plus exclusive."
+                />
+              </div>
+            </section>
+
+            <section>
+              <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.14),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(255,170,60,0.10),transparent_28%)]" />
+
+                <div className="relative">
+                  <div className="rounded-[24px] border border-white/10 bg-black/25 p-5">
+                    <p className="text-xs uppercase tracking-[0.2em] text-white/38">
+                      Expérience
+                    </p>
+                    <h2 className="mt-3 text-2xl font-black text-white">
+                      Un portail central, pas un patchwork de pages.
+                    </h2>
+                    <p className="mt-3 text-sm leading-6 text-white/58">
+                      Tu entres, tu te connectes, puis tu arrives dans un univers cohérent :
+                      dashboard, salons, messages, boutique, inventaire et accès premium.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <PanelInfo label="Accès" value="Connexion / inscription unifiée" />
+                    <PanelInfo label="Style" value="Nocturne, premium, plus mature" />
+                    <PanelInfo label="Navigation" value="Dashboard, salons, profil, VIP" />
+                    <PanelInfo label="Sortie" value="Redirection propre après auth" />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/enter")}
+                    className="mt-5 w-full rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3.5 text-sm font-black text-black transition hover:opacity-95"
+                  >
+                    Commencer maintenant
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
   );
 }
 
-const css = `
-.ec-entry{
-  min-height:100vh;
-  position:relative;
-  overflow:hidden;
-  background:
-    radial-gradient(circle at 50% 14%, rgba(255,0,72,0.16), transparent 18%),
-    linear-gradient(180deg,#020202 0%, #070305 48%, #020202 100%);
-  color:#fff;
-}
-
-.ec-grid{
-  position:absolute;
-  inset:0;
-  background:
-    linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px),
-    linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
-  background-size:44px 44px;
-  opacity:.04;
-  pointer-events:none;
-}
-
-.ec-noise{
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  opacity:.05;
-  background-image:radial-gradient(rgba(255,255,255,0.10) 0.7px, transparent 0.7px);
-  background-size:8px 8px;
-  mix-blend-mode:soft-light;
-}
-
-.ec-smoke{
-  position:absolute;
-  border-radius:999px;
-  filter:blur(95px);
-  pointer-events:none;
-  mix-blend-mode:screen;
-  opacity:.18;
-  animation:ecSmokeFloat 18s ease-in-out infinite alternate;
-}
-
-.ec-smoke-a{
-  top:-2%;
-  left:-8%;
-  width:580px;
-  height:300px;
-  background:
-    radial-gradient(ellipse at 25% 50%, rgba(255,255,255,0.11), transparent 56%),
-    radial-gradient(ellipse at 58% 40%, rgba(255,0,72,0.14), transparent 58%),
-    radial-gradient(ellipse at 82% 55%, rgba(212,175,55,0.12), transparent 54%);
-}
-
-.ec-smoke-b{
-  top:12%;
-  right:-10%;
-  width:660px;
-  height:340px;
-  background:
-    radial-gradient(ellipse at 30% 52%, rgba(255,255,255,0.09), transparent 56%),
-    radial-gradient(ellipse at 58% 42%, rgba(255,40,90,0.14), transparent 58%),
-    radial-gradient(ellipse at 78% 60%, rgba(212,175,55,0.12), transparent 54%);
-  animation-duration:24s;
-}
-
-.ec-smoke-c{
-  bottom:-2%;
-  left:18%;
-  width:620px;
-  height:300px;
-  background:
-    radial-gradient(ellipse at 50% 50%, rgba(255,255,255,0.08), transparent 58%),
-    radial-gradient(ellipse at 28% 48%, rgba(255,0,72,0.12), transparent 56%),
-    radial-gradient(ellipse at 74% 52%, rgba(212,175,55,0.11), transparent 54%);
-  animation-duration:21s;
-}
-
-.ec-glow{
-  position:absolute;
-  border-radius:999px;
-  filter:blur(120px);
-  pointer-events:none;
-  opacity:.14;
-  animation:ecGlowPulse 8s ease-in-out infinite;
-}
-
-.ec-glow-red{
-  width:260px;
-  height:260px;
-  top:10%;
-  left:14%;
-  background:rgba(255,0,72,0.34);
-}
-
-.ec-glow-gold{
-  width:300px;
-  height:300px;
-  top:10%;
-  right:18%;
-  background:rgba(212,175,55,0.28);
-  animation-delay:1.2s;
-}
-
-.ec-glow-white{
-  width:180px;
-  height:180px;
-  top:28%;
-  left:48%;
-  background:rgba(255,255,255,0.16);
-  animation-delay:2.4s;
-}
-
-.ec-shell{
-  position:relative;
-  z-index:2;
-  min-height:100vh;
-  width:100%;
-  max-width:980px;
-  margin:0 auto;
-  padding:34px 18px;
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  align-items:center;
-  text-align:center;
-}
-
-.ec-topBadge{
-  display:inline-flex;
-  align-items:center;
-  gap:10px;
-  padding:10px 16px;
-  border-radius:999px;
-  border:1px solid rgba(212,175,55,0.14);
-  background:rgba(255,255,255,0.04);
-  color:#f3d27a;
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:.10em;
-  text-transform:uppercase;
-  backdrop-filter:blur(12px);
-}
-
-.ec-logoWrap{
-  position:relative;
-  margin-top:22px;
-  width:max-content;
-  padding-right:18px;
-}
-
-.ec-logoGem{
-  font-size:34px;
-  color:#ffffff;
-  opacity:.94;
-  text-shadow:
-    0 0 12px rgba(255,255,255,0.30),
-    0 0 22px rgba(212,175,55,0.18);
-  margin-bottom:10px;
-}
-
-.ec-logoText{
-  margin:0;
-  font-size:clamp(58px, 10vw, 102px);
-  line-height:.9;
-  font-weight:900;
-  letter-spacing:-0.065em;
-  background:linear-gradient(
-    90deg,
-    #ff5b6e 0%,
-    #ff314f 20%,
-    #d4af37 58%,
-    #fff1c9 84%,
-    #ffffff 100%
+function LandingCard({
+  title,
+  desc,
+}: {
+  title: string;
+  desc: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+      <h3 className="text-xl font-black text-white">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-white/58">{desc}</p>
+    </div>
   );
-  -webkit-background-clip:text;
-  background-clip:text;
-  color:transparent;
 }
 
-.ec-logoShine{
-  position:absolute;
-  top:-12px;
-  left:-28px;
-  width:90px;
-  height:160%;
-  background:linear-gradient(
-    120deg,
-    transparent 0%,
-    rgba(255,255,255,0.00) 32%,
-    rgba(255,255,255,0.22) 50%,
-    rgba(255,255,255,0.00) 68%,
-    transparent 100%
+function PanelInfo({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <p className="text-xs uppercase tracking-[0.2em] text-white/38">{label}</p>
+      <p className="mt-2 text-sm font-bold text-white/88">{value}</p>
+    </div>
   );
-  transform:translateX(-120%) skewX(-16deg);
-  filter:blur(4px);
-  animation:ecLogoShine 5.4s ease-in-out infinite;
-  pointer-events:none;
 }
-
-.ec-mainCard{
-  width:100%;
-  max-width:760px;
-  margin-top:26px;
-  padding:30px 28px;
-  border-radius:30px;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
-    rgba(8,8,10,0.78);
-  border:1px solid rgba(255,255,255,0.07);
-  backdrop-filter:blur(18px);
-  box-shadow:0 20px 60px rgba(0,0,0,0.42);
-}
-
-.ec-title{
-  margin:0;
-  font-size:clamp(28px, 5vw, 40px);
-  font-weight:900;
-  line-height:1.1;
-  color:#fff8df;
-}
-
-.ec-lead{
-  margin:18px auto 0;
-  max-width:640px;
-  color:#fff0cc;
-  font-size:18px;
-  font-weight:700;
-  line-height:1.8;
-}
-
-.ec-textBlock{
-  margin-top:22px;
-  display:grid;
-  gap:16px;
-}
-
-.ec-textBlock p{
-  margin:0;
-  color:rgba(255,255,255,0.74);
-  line-height:1.9;
-  font-size:15px;
-}
-
-.ec-infoGrid{
-  margin-top:24px;
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:12px;
-}
-
-.ec-infoCard{
-  padding:16px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.06);
-}
-
-.ec-infoCard span{
-  display:block;
-  color:rgba(255,255,255,0.48);
-  font-size:11px;
-  font-weight:800;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-}
-
-.ec-infoCard strong{
-  display:block;
-  margin-top:8px;
-  color:#f7f1da;
-  font-size:14px;
-  line-height:1.5;
-}
-
-.ec-actions{
-  margin-top:26px;
-  display:flex;
-  flex-wrap:wrap;
-  justify-content:center;
-  gap:14px;
-}
-
-.ec-btn{
-  min-width:210px;
-  min-height:56px;
-  padding:16px 24px;
-  border-radius:18px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  text-decoration:none;
-  font-size:15px;
-  font-weight:900;
-  letter-spacing:.04em;
-  transition:transform .18s ease, filter .2s ease, box-shadow .2s ease;
-}
-
-.ec-btn:hover{
-  transform:translateY(-1px);
-  filter:brightness(1.06);
-}
-
-.ec-btn-primary{
-  color:#160d02;
-  background:linear-gradient(90deg,#8f1b1b 0%, #d6284f 40%, #d4af37 78%, #fff0cc 100%);
-  box-shadow:
-    0 0 20px rgba(255,0,72,0.18),
-    0 0 32px rgba(212,175,55,0.12);
-}
-
-.ec-btn-secondary{
-  color:#f5ead1;
-  background:rgba(255,255,255,0.05);
-  border:1px solid rgba(212,175,55,0.14);
-}
-
-.ec-footnote{
-  margin:18px 0 0;
-  color:rgba(255,255,255,0.44);
-  font-size:12px;
-  line-height:1.7;
-}
-
-@keyframes ecSmokeFloat{
-  0%{ transform:translate3d(0,0,0) scale(1); }
-  50%{ transform:translate3d(18px,-10px,0) scale(1.05); }
-  100%{ transform:translate3d(-24px,14px,0) scale(1.09); }
-}
-
-@keyframes ecGlowPulse{
-  0%,100%{ opacity:.10; transform:scale(1); }
-  50%{ opacity:.18; transform:scale(1.08); }
-}
-
-@keyframes ecLogoShine{
-  0%{ transform:translateX(-120%) skewX(-16deg); opacity:0; }
-  18%{ opacity:1; }
-  38%{ transform:translateX(300%) skewX(-16deg); opacity:.95; }
-  100%{ transform:translateX(300%) skewX(-16deg); opacity:0; }
-}
-
-@media (max-width: 760px){
-  .ec-shell{
-    padding:26px 14px;
-  }
-
-  .ec-mainCard{
-    padding:22px 18px;
-    border-radius:22px;
-  }
-
-  .ec-lead{
-    font-size:16px;
-  }
-
-  .ec-infoGrid{
-    grid-template-columns:1fr;
-  }
-
-  .ec-actions{
-    flex-direction:column;
-    align-items:center;
-  }
-
-  .ec-btn{
-    width:100%;
-    max-width:340px;
-  }
-}
-`;

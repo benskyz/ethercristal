@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { requireSupabaseBrowserClient } from "../../lib/supabase";
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
 type ThemeMode = "gold" | "dark" | "velvet";
 type MatchPreference = "soft" | "vip" | "intense";

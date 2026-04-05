@@ -86,7 +86,7 @@ export default function RoomPage() {
   const [myUserId, setMyUserId] = useState<string>("");
   const [myProfile, setMyProfile] = useState<DisplayProfile | null>(null);
 
-  // Cache profils des auteurs de messages
+  // Cache profils (présence + chat)
   const [profilesById, setProfilesById] = useState<Record<string, DisplayProfile>>({});
 
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
@@ -128,11 +128,17 @@ export default function RoomPage() {
       .select("id, room_id, user_id, pseudo, updated_at, joined_at, slot_index")
       .eq("room_id", roomId);
 
-    if (!error) setPresence((data ?? []) as PresenceRow[]);
+    if (error) return;
+    const rows = (data ?? []) as PresenceRow[];
+    setPresence(rows);
+
+    // Batch fetch profiles for online users (slots + list)
+    const online = rows.filter((p) => isOnline(p.updated_at));
+    const ids = Array.from(new Set(online.map((p) => p.user_id).filter(Boolean)));
+    await ensureProfilesLoaded(ids);
   }
 
   async function loadMessages() {
-    // perf: 200 derniers messages max
     const { data, error } = await supabase
       .from("room_messages")
       .select("id, room_id, user_id, pseudo, content, created_at")
@@ -141,10 +147,10 @@ export default function RoomPage() {
       .limit(200);
 
     if (error) return;
+
     const rows = (data ?? []) as RoomMessageRow[];
     setMessages(rows);
 
-    // Batch fetch profiles for senders
     const ids = Array.from(new Set(rows.map((m) => m.user_id).filter(Boolean)));
     await ensureProfilesLoaded(ids);
   }
@@ -244,10 +250,8 @@ export default function RoomPage() {
     const user = await getAuthedUserOrRedirect();
     if (!user) return;
 
-    // Cam only when taking a slot
     await ensureCamStream();
 
-    // ensure presence row exists
     const { data: existing } = await supabase
       .from("room_presence")
       .select("id")
@@ -270,7 +274,6 @@ export default function RoomPage() {
       }
     }
 
-    // claim slot (unique index will block duplicates)
     const { error: updErr } = await supabase
       .from("room_presence")
       .update({
@@ -401,8 +404,7 @@ export default function RoomPage() {
 
       setMyUserId(user.id);
 
-      // load my profile (for name effects too)
-      const { data: profile, error: pErr } = await supabase
+      const { data: profile } = await supabase
         .from("profiles")
         .select(
           "id, pseudo, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style, is_admin, role"
@@ -410,17 +412,13 @@ export default function RoomPage() {
         .eq("id", user.id)
         .maybeSingle();
 
-      if (pErr) setError(pErr.message);
-
       const mine = (profile as any) as DisplayProfile | null;
       if (mounted) setMyProfile(mine);
 
-      // put me in cache too
       if (mine && (mine as any).id) {
         setProfilesById((prev) => ({ ...prev, [(mine as any).id]: mine }));
       }
 
-      // presence without slot
       await supabase.from("room_presence").upsert(
         {
           room_id: roomId,
@@ -434,7 +432,6 @@ export default function RoomPage() {
 
       await Promise.all([loadPresence(), loadMessages()]);
 
-      // restore slot if existed (optional)
       const { data: pres } = await supabase
         .from("room_presence")
         .select("slot_index")
@@ -447,10 +444,7 @@ export default function RoomPage() {
 
       if (mounted) setSelectedSlot(restored);
 
-      // if restored, allow camera preview
-      if (restored) {
-        await ensureCamStream();
-      }
+      if (restored) await ensureCamStream();
 
       setLoading(false);
     })();
@@ -484,11 +478,9 @@ export default function RoomPage() {
           setMessages((prev) => {
             if (prev.some((m) => m.id === row.id)) return prev;
             const next = [...prev, row];
-            // keep last 200
             return next.length > 200 ? next.slice(next.length - 200) : next;
           });
 
-          // ensure profile loaded for this sender (async)
           if (row.user_id) {
             await ensureProfilesLoaded([row.user_id]);
           }
@@ -528,15 +520,16 @@ export default function RoomPage() {
   }, [messages.length]);
 
   // ---------- DERIVED ----------
-  const onlineMembers = useMemo(() => presence.filter((p) => isOnline(p.updated_at)), [presence]);
+  const onlinePresence = useMemo(() => presence.filter((p) => isOnline(p.updated_at)), [presence]);
+  const onlineCount = onlinePresence.length;
 
   const slotsAll = useMemo(() => {
     return Array.from({ length: 12 }, (_, i) => {
       const slotId = i + 1;
-      const member = onlineMembers.find((p) => p.slot_index === slotId) || null;
+      const member = onlinePresence.find((p) => p.slot_index === slotId) || null;
       return { id: slotId, member };
     });
-  }, [onlineMembers]);
+  }, [onlinePresence]);
 
   const slots = useMemo(() => (showExtras ? slotsAll : slotsAll.slice(0, 6)), [slotsAll, showExtras]);
 
@@ -579,7 +572,6 @@ export default function RoomPage() {
 
   const isChanging = selectedSlot && pendingSlot && pendingSlot !== selectedSlot;
 
-  // ---------- UI ----------
   return (
     <div className="relative min-h-screen p-4 sm:p-6 space-y-4 text-white">
       {/* Modal */}
@@ -664,7 +656,7 @@ export default function RoomPage() {
           </div>
 
           <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200">
-            En ligne: {onlineMembers.length}
+            En ligne: {onlineCount}
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80">
@@ -702,10 +694,9 @@ export default function RoomPage() {
         </div>
       ) : (
         <>
-          {/* Controls row */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm text-white/70">
-              Pseudos stylés dans le chat ✅
+              Slots occupés = pseudo stylé ✅
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -741,6 +732,11 @@ export default function RoomPage() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {slots.map((s) => {
               const occupied = Boolean(s.member);
+              const isMine = s.member?.user_id === myUserId;
+
+              const memberProfile: DisplayProfile | null = s.member
+                ? (profilesById[s.member.user_id] || { pseudo: s.member.pseudo || "Membre" })
+                : null;
 
               return (
                 <div
@@ -754,6 +750,7 @@ export default function RoomPage() {
                     {slotLabel(s.id)}
                   </div>
 
+                  {/* My camera */}
                   {selectedSlot === s.id && videoRef.current?.srcObject ? (
                     <video
                       ref={videoRef}
@@ -763,14 +760,32 @@ export default function RoomPage() {
                       className={cx("w-full h-full object-cover", !cam && "opacity-20 blur-sm")}
                     />
                   ) : occupied ? (
-                    <div className="flex h-full w-full flex-col items-center justify-center text-center p-4">
-                      <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                        <Users className="h-6 w-6 text-white/70" />
+                    <div className="flex h-full w-full flex-col justify-between p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black text-emerald-200">
+                          EN LIGNE
+                        </span>
+                        {isMine ? (
+                          <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black text-white/70">
+                            TOI
+                          </span>
+                        ) : null}
                       </div>
-                      <div className="max-w-[90%] truncate text-sm font-black">
-                        {s.member?.pseudo || "Membre"}
+
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                        {memberProfile ? (
+                          <ProfileName profile={memberProfile} size="sm" showTitle />
+                        ) : (
+                          <div className="text-sm font-black text-white">Membre</div>
+                        )}
                       </div>
-                      <div className="mt-1 text-[11px] text-white/45">Occupé</div>
+
+                      <button
+                        onClick={() => requestJoinSlot(s.id)}
+                        className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-black text-white/85 hover:bg-white/15"
+                      >
+                        {selectedSlot ? "Changer ici" : "Prendre"}
+                      </button>
                     </div>
                   ) : (
                     <div className="flex h-full w-full flex-col items-center justify-center text-center p-4">

@@ -1,90 +1,135 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import { ToastProvider } from "@/components/ToastHost";
+import { Menu, X, Sparkles } from "lucide-react";
 
-const supabase = requireSupabaseBrowserClient();
+function cx(...c: Array<string | false | null | undefined>) {
+  return c.filter(Boolean).join(" ");
+}
 
-export default function ProtectedLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  const router = useRouter();
-  const [ready, setReady] = useState(false);
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
 
+  // Close drawer on route change
   useEffect(() => {
-    let mounted = true;
+    setOpen(false);
+  }, [pathname]);
 
-    async function boot() {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!mounted) return;
-
-        if (!user) {
-          router.replace("/enter");
-          return;
-        }
-
-        setReady(true);
-      } catch {
-        if (!mounted) return;
-        router.replace("/enter");
-      }
-    }
-
-    boot();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-
-      if (!session?.user) {
-        setReady(false);
-        router.replace("/enter");
-        return;
-      }
-
-      setReady(true);
-    });
-
+  // Prevent body scroll when drawer open (mobile)
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      mounted = false;
-      subscription.unsubscribe();
+      document.body.style.overflow = prev;
     };
-  }, [router]);
-
-  if (!ready) {
-    return (
-      <div className="min-h-screen bg-[#050507] text-white">
-        <div className="flex min-h-screen items-center justify-center px-4">
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm font-bold text-white/80 shadow-[0_20px_60px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-            Chargement sécurisé...
-          </div>
-        </div>
-      </div>
-    );
-  }
+  }, [open]);
 
   return (
-    <div className="min-h-screen bg-[#050507] text-white">
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(140,0,45,0.22),transparent_32%),radial-gradient(circle_at_bottom,rgba(255,120,20,0.12),transparent_32%),linear-gradient(to_bottom,#050507,#08070b_45%,#050507)]">
-        <div className="flex min-h-screen">
+    <ToastProvider>
+      <div className="min-h-screen bg-[#07070a] text-white">
+        {/* Ambient background */}
+        <div className="pointer-events-none fixed inset-0 -z-10">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
+          <div className="absolute -left-24 top-24 h-64 w-64 rounded-full bg-rose-500/10 blur-3xl" />
+          <div className="absolute -right-24 bottom-16 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+        </div>
+
+        {/* Desktop layout */}
+        <div className="hidden lg:flex">
           <Sidebar />
-          <main className="min-w-0 flex-1">
-            <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+          <main className="min-h-screen flex-1">
+            <div className="mx-auto w-full max-w-[1240px] p-6 xl:p-8">
+              <div className="rounded-[36px] border border-white/10 bg-white/[0.03] p-4 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-6">
+                {children}
+              </div>
+            </div>
+          </main>
+        </div>
+
+        {/* Mobile layout */}
+        <div className="lg:hidden">
+          {/* Topbar */}
+          <header className="sticky top-0 z-40 border-b border-white/10 bg-black/50 backdrop-blur-2xl">
+            <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-3 px-4 py-3">
+              <button
+                onClick={() => setOpen(true)}
+                className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
+                aria-label="Open menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+
+              <div className="flex items-center gap-2">
+                <div className="grid h-9 w-9 place-items-center rounded-2xl border border-white/10 bg-white/5">
+                  <Sparkles className="h-4 w-4 text-white/80" />
+                </div>
+                <div className="leading-tight">
+                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">
+                    EtherCristal
+                  </div>
+                  <div className="text-sm font-black text-white">Espace privé</div>
+                </div>
+              </div>
+
+              {/* spacer */}
+              <div className="h-9 w-9" />
+            </div>
+          </header>
+
+          {/* Drawer overlay */}
+          <div
+            className={cx(
+              "fixed inset-0 z-50 transition",
+              open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+            )}
+          >
+            <div
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+              onClick={() => setOpen(false)}
+            />
+
+            {/* Drawer */}
+            <div
+              className={cx(
+                "absolute left-0 top-0 h-full w-[86%] max-w-[360px] border-r border-white/10 bg-black/60 backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.65)] transition-transform",
+                open ? "translate-x-0" : "-translate-x-full"
+              )}
+            >
+              <div className="flex items-center justify-between p-4">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">Menu</div>
+                  <div className="text-lg font-black text-white">Navigation</div>
+                </div>
+
+                <button
+                  onClick={() => setOpen(false)}
+                  className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
+                  aria-label="Close menu"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="h-[calc(100%-72px)] overflow-auto px-3 pb-6">
+                {/* Sidebar reused; ok if sticky, drawer wrapper handles scrolling */}
+                <Sidebar />
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <main className="mx-auto w-full max-w-[1240px] p-4 pb-10">
+            <div className="rounded-[28px] border border-white/10 bg-white/[0.03] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
               {children}
             </div>
           </main>
         </div>
       </div>
-    </div>
+    </ToastProvider>
   );
 }

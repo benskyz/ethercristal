@@ -1,5 +1,4 @@
 export type ShopCategory = "name_fx" | "badge" | "title" | "vip_plan" | "master_ether";
-
 export type Rarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY" | "MYTHIC";
 
 export type ShopItem = {
@@ -7,13 +6,22 @@ export type ShopItem = {
   category: ShopCategory;
   name: string;
   description: string;
-  price: number;         // crédits (0 si master-only)
+  price: number; // crédits (0 si master-only)
   rarity: Rarity;
   vibe: string;
-  previewClass?: string; // style texte (nom)
-  badgeClass?: string;   // style badge
-  titleText?: string;    // texte de titre
-  requiresMaster?: boolean; // réservé admin/maître
+
+  // name effects
+  previewClass?: string;
+
+  // badges
+  badgeClass?: string;
+
+  // titles / master
+  titleText?: string;
+
+  // master-only items (toi)
+  requiresMaster?: boolean;
+
   meta?: Record<string, any>;
 };
 
@@ -223,9 +231,9 @@ export const SHOP: ShopItem[] = [
   // MASTER ETHER (TOI SEULEMENT)
   // ==========================
   {
-    key: "ether_master_title_1",
+    key: "ether_master_title_dominus",
     category: "master_ether",
-    name: "MAÎTRE ETHER — TITRE: DOMINUS",
+    name: "MAÎTRE ETHER — DOMINUS",
     description: "Titre unique réservé au Maître Ether.",
     price: 0,
     rarity: "MYTHIC",
@@ -236,9 +244,9 @@ export const SHOP: ShopItem[] = [
       "bg-gradient-to-r from-fuchsia-300 via-cyan-200 to-white bg-clip-text text-transparent drop-shadow-[0_0_28px_rgba(160,120,255,0.22)]",
   },
   {
-    key: "ether_master_title_2",
+    key: "ether_master_title_abyssal",
     category: "master_ether",
-    name: "MAÎTRE ETHER — TITRE: ABYSSAL",
+    name: "MAÎTRE ETHER — ABYSSAL",
     description: "Titre abyssal réservé au Maître Ether.",
     price: 0,
     rarity: "MYTHIC",
@@ -250,6 +258,7 @@ export const SHOP: ShopItem[] = [
   },
 ];
 
+// ---------- HELPERS ----------
 export function getShopItemByKey(key: string) {
   return SHOP.find((x) => x.key === key) || null;
 }
@@ -267,4 +276,40 @@ export function rarityBadgeClass(r: Rarity) {
     MYTHIC: "border-rose-400/25 bg-rose-500/10 text-rose-200",
   };
   return map[r];
+}
+
+export function isNameEffectKey(key: string) {
+  const item = getShopItemByKey(key);
+  return item?.category === "name_fx";
+}
+
+// ---------- COMPAT (Inventaire expects these exports) ----------
+export function getRarityLabel(r: string) {
+  const v = String(r || "").toUpperCase();
+  if (v === "COMMON") return "Commun";
+  if (v === "RARE") return "Rare";
+  if (v === "EPIC") return "Épique";
+  if (v === "LEGENDARY") return "Légendaire";
+  if (v === "MYTHIC") return "Mythique";
+  return v || "—";
+}
+
+export function getRarityClasses(r: string) {
+  const v = String(r || "").toUpperCase();
+  if (v === "COMMON") return "border-white/10 bg-white/10 text-white/70";
+  if (v === "RARE") return "border-cyan-400/20 bg-cyan-500/10 text-cyan-200";
+  if (v === "EPIC") return "border-fuchsia-400/20 bg-fuchsia-500/10 text-fuchsia-200";
+  if (v === "LEGENDARY") return "border-amber-400/25 bg-amber-500/10 text-amber-200";
+  if (v === "MYTHIC") return "border-rose-400/25 bg-rose-500/10 text-rose-200";
+  return "border-white/10 bg-white/10 text-white/70";
+}
+
+export function getCategoryLabel(cat: string) {
+  const c = String(cat || "").toLowerCase();
+  if (c === "name_fx") return "Effet de nom";
+  if (c === "badge") return "Badge";
+  if (c === "title") return "Titre";
+  if (c === "vip_plan") return "VIP";
+  if (c === "master_ether") return "Maître Ether";
+  return cat || "—";
 }

@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // IMPORTANT: évite que le build plante à cause du checker TS (souvent bug en Termux/WASM)
+  // Évite que le build plante sur Vercel si TS est trop strict
   typescript: { ignoreBuildErrors: true },
-  eslint: { ignoreDuringBuilds: true },
 };
 
 export default nextConfig;

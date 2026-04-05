@@ -6,17 +6,21 @@ import {
   ArrowLeft,
   Camera,
   CameraOff,
-  Mic,
-  MicOff,
-  Users,
-  Send,
-  RefreshCw,
   ChevronDown,
   ChevronUp,
   DoorOpen,
+  Mic,
+  MicOff,
+  RefreshCw,
+  Send,
+  Users,
   Wand2,
+  X,
+  Check,
+  AlertTriangle,
 } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import ProfileName, { DisplayProfile } from "@/components/ProfileName";
 
 const supabase = requireSupabaseBrowserClient();
 
@@ -43,15 +47,26 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function parseTime(updated_at?: string | null) {
-  if (!updated_at) return 0;
-  const t = new Date(updated_at).getTime();
+function parseTime(s?: string | null) {
+  if (!s) return 0;
+  const t = new Date(s).getTime();
   return Number.isNaN(t) ? 0 : t;
 }
 
 function isOnline(updated_at?: string | null) {
   const t = parseTime(updated_at);
   return t > 0 && Date.now() - t < 60_000;
+}
+
+function slotLabel(n: number) {
+  return n <= 6 ? `Place ${n}` : `Extra ${n - 6}`;
+}
+
+function formatMsgTime(ts?: string | null) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
 }
 
 export default function RoomPage() {
@@ -66,43 +81,72 @@ export default function RoomPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [presence, setPresence] = useState<PresenceRow[]>([]);
-  const [userId, setUserId] = useState("");
-  const [pseudo, setPseudo] = useState("Membre");
+  const [messages, setMessages] = useState<RoomMessageRow[]>([]);
 
-  // null = pas de place
+  const [myUserId, setMyUserId] = useState<string>("");
+  const [myProfile, setMyProfile] = useState<DisplayProfile | null>(null);
+
+  // Cache profils des auteurs de messages
+  const [profilesById, setProfilesById] = useState<Record<string, DisplayProfile>>({});
+
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
 
   const [cam, setCam] = useState(true);
   const [mic, setMic] = useState(true);
 
+  const [showExtras, setShowExtras] = useState(false);
+
   const [chat, setChat] = useState("");
-  const [messages, setMessages] = useState<RoomMessageRow[]>([]);
   const [sending, setSending] = useState(false);
 
-  const [showExtras, setShowExtras] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
-  // ----------- LOADERS -----------
+  // Modal confirmation slot
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingSlot, setPendingSlot] = useState<number | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  // ---------- AUTH ----------
+  async function getAuthedUserOrRedirect() {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error || !user) {
+      router.push("/enter");
+      return null;
+    }
+    return user;
+  }
+
+  // ---------- LOADERS ----------
   async function loadPresence() {
     const { data, error } = await supabase
       .from("room_presence")
       .select("id, room_id, user_id, pseudo, updated_at, joined_at, slot_index")
       .eq("room_id", roomId);
 
-    if (error) return;
-    setPresence((data ?? []) as PresenceRow[]);
+    if (!error) setPresence((data ?? []) as PresenceRow[]);
   }
 
   async function loadMessages() {
+    // perf: 200 derniers messages max
     const { data, error } = await supabase
       .from("room_messages")
       .select("id, room_id, user_id, pseudo, content, created_at")
       .eq("room_id", roomId)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .limit(200);
 
     if (error) return;
-    setMessages((data ?? []) as RoomMessageRow[]);
+    const rows = (data ?? []) as RoomMessageRow[];
+    setMessages(rows);
+
+    // Batch fetch profiles for senders
+    const ids = Array.from(new Set(rows.map((m) => m.user_id).filter(Boolean)));
+    await ensureProfilesLoaded(ids);
   }
 
   async function refreshAll() {
@@ -116,13 +160,38 @@ export default function RoomPage() {
     }
   }
 
-  // ----------- CAMERA -----------
-  async function startCam() {
+  // ---------- PROFILES CACHE ----------
+  async function ensureProfilesLoaded(userIds: string[]) {
+    const missing = userIds.filter((id) => id && !profilesById[id]);
+    if (missing.length === 0) return;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select(
+        "id, pseudo, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style, is_admin, role"
+      )
+      .in("id", missing);
+
+    if (error) return;
+
+    const next: Record<string, DisplayProfile> = {};
+    for (const row of data ?? []) {
+      next[(row as any).id] = row as any;
+    }
+
+    setProfilesById((prev) => ({ ...prev, ...next }));
+  }
+
+  // ---------- CAMERA ----------
+  async function ensureCamStream() {
+    if (videoRef.current?.srcObject) return;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
+
       if (videoRef.current) videoRef.current.srcObject = stream;
 
       stream.getVideoTracks().forEach((t) => (t.enabled = cam));
@@ -130,6 +199,12 @@ export default function RoomPage() {
     } catch {
       setError("Impossible d'accéder à la caméra ou au micro.");
     }
+  }
+
+  function stopCamStream() {
+    const stream = videoRef.current?.srcObject as MediaStream | null;
+    stream?.getTracks().forEach((t) => t.stop());
+    if (videoRef.current) videoRef.current.srcObject = null;
   }
 
   function toggleCam() {
@@ -148,157 +223,101 @@ export default function RoomPage() {
     setMic(next);
   }
 
-  // ----------- PRESENCE (NO AUTO SLOT) -----------
-  async function ensurePresence(uid: string, ps: string) {
-    const { data: existing } = await supabase
+  // ---------- PRESENCE / SLOT ----------
+  async function leavePresence() {
+    const user = await getAuthedUserOrRedirect();
+    if (!user || !roomId) return;
+
+    await supabase
       .from("room_presence")
-      .select("id, slot_index")
+      .delete()
       .eq("room_id", roomId)
-      .eq("user_id", uid)
-      .maybeSingle();
-
-    if (existing?.id) {
-      await supabase
-        .from("room_presence")
-        .update({
-          pseudo: ps,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id);
-    } else {
-      await supabase.from("room_presence").insert({
-        room_id: roomId,
-        user_id: uid,
-        pseudo: ps,
-        slot_index: null,
-        updated_at: new Date().toISOString(),
-      });
-    }
-  }
-
-  async function leavePresence(uid: string) {
-    await supabase.from("room_presence").delete().eq("room_id", roomId).eq("user_id", uid);
+      .eq("user_id", user.id);
   }
 
   async function joinSlot(slot: number) {
     setError("");
     setInfo("");
 
-    if (!roomId || !userId) return;
+    if (!roomId) return;
 
-    const { data: fresh } = await supabase
-      .from("room_presence")
-      .select("user_id, slot_index")
-      .eq("room_id", roomId);
+    const user = await getAuthedUserOrRedirect();
+    if (!user) return;
 
-    const taken = (fresh ?? []).some((p: any) => p.slot_index === slot && p.user_id !== userId);
-    if (taken) {
-      setError("Cette place est déjà occupée.");
-      return;
-    }
+    // Cam only when taking a slot
+    await ensureCamStream();
 
-    // Cam starts only when you choose a slot
-    if (!videoRef.current?.srcObject) {
-      await startCam();
-    }
-
+    // ensure presence row exists
     const { data: existing } = await supabase
       .from("room_presence")
       .select("id")
       .eq("room_id", roomId)
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .maybeSingle();
 
-    if (existing?.id) {
-      const { error } = await supabase
-        .from("room_presence")
-        .update({
-          slot_index: slot,
-          pseudo,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id);
-
-      if (error) {
-        setError(error.message);
-        return;
-      }
-    } else {
-      const { error } = await supabase.from("room_presence").insert({
+    if (!existing?.id) {
+      const { error: insErr } = await supabase.from("room_presence").insert({
         room_id: roomId,
-        user_id: userId,
-        pseudo,
-        slot_index: slot,
+        user_id: user.id,
+        pseudo: myProfile?.pseudo || "Membre",
+        slot_index: null,
         updated_at: new Date().toISOString(),
       });
 
-      if (error) {
-        setError(error.message);
+      if (insErr) {
+        setError(insErr.message);
         return;
       }
     }
 
-    setSelectedSlot(slot);
-    setInfo(`Tu as rejoint ${slot <= 6 ? `la place ${slot}` : `l’extra ${slot - 6}`}.`);
-    await loadPresence();
-  }
-
-  async function autoJoin() {
-    setError("");
-    setInfo("");
-
-    // Charge présence fraîche, trouve slot libre
-    const { data: fresh, error } = await supabase
+    // claim slot (unique index will block duplicates)
+    const { error: updErr } = await supabase
       .from("room_presence")
-      .select("slot_index, user_id")
-      .eq("room_id", roomId);
+      .update({
+        slot_index: slot,
+        pseudo: myProfile?.pseudo || "Membre",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("room_id", roomId)
+      .eq("user_id", user.id);
 
-    if (error) {
-      setError(error.message);
+    if (updErr) {
+      const anyErr = updErr as any;
+      if (anyErr?.code === "23505") setError("Cette place est déjà occupée.");
+      else setError(updErr.message);
       return;
     }
 
-    const taken = new Set<number>();
-    for (const row of fresh ?? []) {
-      if (row.slot_index && row.slot_index >= 1 && row.slot_index <= 12) {
-        taken.add(row.slot_index);
-      }
-    }
-
-    const firstFree = Array.from({ length: 12 }, (_, i) => i + 1).find((n) => !taken.has(n));
-
-    if (!firstFree) {
-      setError("Aucune place libre.");
-      return;
-    }
-
-    await joinSlot(firstFree);
+    setSelectedSlot(slot);
+    setInfo(`Tu es maintenant sur ${slotLabel(slot)}.`);
+    await loadPresence();
   }
 
   async function leaveSlotOnly() {
     setError("");
     setInfo("");
 
-    if (!roomId || !userId) return;
+    if (!roomId) return;
+
+    const user = await getAuthedUserOrRedirect();
+    if (!user) return;
 
     const { data: existing } = await supabase
       .from("room_presence")
       .select("id")
       .eq("room_id", roomId)
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .maybeSingle();
 
     if (!existing?.id) {
       setSelectedSlot(null);
+      stopCamStream();
       return;
     }
 
     const { error } = await supabase
       .from("room_presence")
-      .update({
-        slot_index: null,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ slot_index: null, updated_at: new Date().toISOString() })
       .eq("id", existing.id);
 
     if (error) {
@@ -308,10 +327,62 @@ export default function RoomPage() {
 
     setSelectedSlot(null);
     setInfo("Tu as quitté ton emplacement.");
+    stopCamStream();
     await loadPresence();
   }
 
-  // ----------- INIT -----------
+  // ---------- MODAL CONFIRM ----------
+  function requestJoinSlot(slot: number) {
+    setError("");
+    setInfo("");
+    setPendingSlot(slot);
+    setConfirmOpen(true);
+  }
+
+  function closeModal() {
+    setConfirmOpen(false);
+    setPendingSlot(null);
+    setConfirmBusy(false);
+  }
+
+  async function confirmJoin() {
+    if (!pendingSlot) return;
+    setConfirmBusy(true);
+    await joinSlot(pendingSlot);
+    setConfirmBusy(false);
+    closeModal();
+  }
+
+  async function requestAuto() {
+    setError("");
+    setInfo("");
+
+    const { data, error } = await supabase
+      .from("room_presence")
+      .select("slot_index")
+      .eq("room_id", roomId);
+
+    if (error) {
+      setError(error.message);
+      return;
+    }
+
+    const taken = new Set<number>();
+    for (const row of data ?? []) {
+      const n = (row as any).slot_index ?? null;
+      if (n && n >= 1 && n <= 12) taken.add(n);
+    }
+
+    const firstFree = Array.from({ length: 12 }, (_, i) => i + 1).find((n) => !taken.has(n));
+    if (!firstFree) {
+      setError("Aucune place libre.");
+      return;
+    }
+
+    requestJoinSlot(firstFree);
+  }
+
+  // ---------- INIT ----------
   useEffect(() => {
     if (!roomId) {
       router.push("/salons");
@@ -325,36 +396,46 @@ export default function RoomPage() {
       setError("");
       setInfo("");
 
-      const {
-        data: { user },
-        error: authErr,
-      } = await supabase.auth.getUser();
+      const user = await getAuthedUserOrRedirect();
+      if (!user) return;
 
-      if (authErr || !user) {
-        router.push("/enter");
-        return;
-      }
+      setMyUserId(user.id);
 
-      if (!mounted) return;
-
-      setUserId(user.id);
-
-      const { data: profile } = await supabase
+      // load my profile (for name effects too)
+      const { data: profile, error: pErr } = await supabase
         .from("profiles")
-        .select("pseudo")
+        .select(
+          "id, pseudo, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style, is_admin, role"
+        )
         .eq("id", user.id)
         .maybeSingle();
 
-      const myPseudo = profile?.pseudo || "Membre";
-      setPseudo(myPseudo);
+      if (pErr) setError(pErr.message);
 
-      // presence yes, slot no
-      await ensurePresence(user.id, myPseudo);
+      const mine = (profile as any) as DisplayProfile | null;
+      if (mounted) setMyProfile(mine);
+
+      // put me in cache too
+      if (mine && (mine as any).id) {
+        setProfilesById((prev) => ({ ...prev, [(mine as any).id]: mine }));
+      }
+
+      // presence without slot
+      await supabase.from("room_presence").upsert(
+        {
+          room_id: roomId,
+          user_id: user.id,
+          pseudo: mine?.pseudo || "Membre",
+          slot_index: null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "room_id,user_id" }
+      );
 
       await Promise.all([loadPresence(), loadMessages()]);
 
-      // restore slot (optional)
-      const { data: mine } = await supabase
+      // restore slot if existed (optional)
+      const { data: pres } = await supabase
         .from("room_presence")
         .select("slot_index")
         .eq("room_id", roomId)
@@ -362,12 +443,13 @@ export default function RoomPage() {
         .maybeSingle();
 
       const restored =
-        mine?.slot_index && mine.slot_index >= 1 && mine.slot_index <= 12 ? mine.slot_index : null;
+        pres?.slot_index && pres.slot_index >= 1 && pres.slot_index <= 12 ? pres.slot_index : null;
 
-      setSelectedSlot(restored);
+      if (mounted) setSelectedSlot(restored);
 
+      // if restored, allow camera preview
       if (restored) {
-        await startCam();
+        await ensureCamStream();
       }
 
       setLoading(false);
@@ -379,20 +461,7 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // cleanup
-  useEffect(() => {
-    return () => {
-      const stream = videoRef.current?.srcObject as MediaStream | null;
-      stream?.getTracks().forEach((t) => t.stop());
-
-      if (roomId && userId) {
-        leavePresence(userId);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, userId]);
-
-  // subscriptions
+  // ---------- SUBSCRIPTIONS ----------
   useEffect(() => {
     if (!roomId) return;
 
@@ -410,9 +479,19 @@ export default function RoomPage() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
-        (payload) => {
+        async (payload) => {
           const row = payload.new as RoomMessageRow;
-          setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === row.id)) return prev;
+            const next = [...prev, row];
+            // keep last 200
+            return next.length > 200 ? next.slice(next.length - 200) : next;
+          });
+
+          // ensure profile loaded for this sender (async)
+          if (row.user_id) {
+            await ensureProfilesLoaded([row.user_id]);
+          }
         }
       )
       .subscribe();
@@ -422,29 +501,33 @@ export default function RoomPage() {
       supabase.removeChannel(messagesChannel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [roomId, profilesById]);
 
-  // heartbeat
+  // ---------- HEARTBEAT ----------
   useEffect(() => {
-    if (!roomId || !userId) return;
+    if (!roomId) return;
 
-    const t = setInterval(() => {
+    const t = setInterval(async () => {
+      const user = await supabase.auth.getUser();
+      const uid = user.data.user?.id;
+      if (!uid) return;
+
       supabase
         .from("room_presence")
         .update({ updated_at: new Date().toISOString() })
         .eq("room_id", roomId)
-        .eq("user_id", userId);
+        .eq("user_id", uid);
     }, 20_000);
 
     return () => clearInterval(t);
-  }, [roomId, userId]);
+  }, [roomId]);
 
-  // autoscroll chat
+  // ---------- CHAT AUTOSCROLL ----------
   useEffect(() => {
     chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: "smooth" });
   }, [messages.length]);
 
-  // derived
+  // ---------- DERIVED ----------
   const onlineMembers = useMemo(() => presence.filter((p) => isOnline(p.updated_at)), [presence]);
 
   const slotsAll = useMemo(() => {
@@ -457,18 +540,21 @@ export default function RoomPage() {
 
   const slots = useMemo(() => (showExtras ? slotsAll : slotsAll.slice(0, 6)), [slotsAll, showExtras]);
 
+  // ---------- SEND MESSAGE ----------
   async function sendMessage() {
     setError("");
     const content = chat.trim();
     if (!content) return;
-    if (!roomId || !userId) return;
+
+    const user = await getAuthedUserOrRedirect();
+    if (!user) return;
 
     setSending(true);
 
     const { error } = await supabase.from("room_messages").insert({
       room_id: roomId,
-      user_id: userId,
-      pseudo,
+      user_id: user.id,
+      pseudo: myProfile?.pseudo || "Membre",
       content,
     });
 
@@ -482,8 +568,87 @@ export default function RoomPage() {
     setChat("");
   }
 
+  // ---------- CLEANUP ----------
+  useEffect(() => {
+    return () => {
+      stopCamStream();
+      if (roomId) leavePresence();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
+
+  const isChanging = selectedSlot && pendingSlot && pendingSlot !== selectedSlot;
+
+  // ---------- UI ----------
   return (
     <div className="relative min-h-screen p-4 sm:p-6 space-y-4 text-white">
+      {/* Modal */}
+      {confirmOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeModal} />
+          <div className="relative w-full max-w-md rounded-[28px] border border-white/10 bg-zinc-950/80 p-6 shadow-[0_30px_90px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-[0.22em] text-white/45">Confirmation</div>
+
+                {selectedSlot ? (
+                  <h2 className="mt-2 text-2xl font-black text-white">
+                    Changer de {slotLabel(selectedSlot)} → {pendingSlot ? slotLabel(pendingSlot) : "…"} ?
+                  </h2>
+                ) : (
+                  <h2 className="mt-2 text-2xl font-black text-white">
+                    Prendre {pendingSlot ? slotLabel(pendingSlot) : "cette place"} ?
+                  </h2>
+                )}
+
+                <p className="mt-2 text-sm leading-6 text-white/60">
+                  {selectedSlot
+                    ? "Tu vas quitter ta place actuelle et apparaître dans la nouvelle."
+                    : "Tu vas apparaître dans ce carré. Tu pourras changer plus tard."}
+                </p>
+
+                {isChanging ? (
+                  <div className="mt-4 flex items-start gap-3 rounded-2xl border border-yellow-400/20 bg-yellow-500/10 p-4">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 text-yellow-300" />
+                    <div className="text-sm text-yellow-200/90">
+                      Attention : tu changes d’emplacement. Tes réglages cam/mic restent, mais ta position bouge.
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                onClick={closeModal}
+                className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
+                title="Fermer"
+              >
+                <X className="h-4 w-4 text-white/80" />
+              </button>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={closeModal}
+                disabled={confirmBusy}
+                className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/80 hover:bg-white/10 disabled:opacity-60"
+              >
+                Annuler
+              </button>
+
+              <button
+                onClick={confirmJoin}
+                disabled={confirmBusy || !pendingSlot}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-3 text-sm font-black text-black hover:opacity-95 disabled:opacity-60"
+              >
+                <Check className="h-4 w-4" />
+                {confirmBusy ? "..." : "Confirmer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Top bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -503,7 +668,7 @@ export default function RoomPage() {
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80">
-            {selectedSlot ? `Ta place: ${selectedSlot}` : "Aucune place"}
+            {selectedSlot ? `Ta place: ${slotLabel(selectedSlot)}` : "Aucune place"}
           </div>
         </div>
 
@@ -537,17 +702,17 @@ export default function RoomPage() {
         </div>
       ) : (
         <>
+          {/* Controls row */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm text-white/70">
-              Choisis ta place manuellement, ou utilise “Auto”.
+              Pseudos stylés dans le chat ✅
             </div>
 
             <div className="flex flex-wrap gap-2">
               {!selectedSlot ? (
                 <button
-                  onClick={autoJoin}
+                  onClick={requestAuto}
                   className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-sm font-black text-black hover:opacity-95"
-                  title="Prendre la première place libre"
                 >
                   <Wand2 className="h-4 w-4" />
                   Auto
@@ -572,25 +737,39 @@ export default function RoomPage() {
             </div>
           </div>
 
+          {/* Slots grid */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {slots.map((s) => {
-              const isMe = s.member?.user_id === userId;
               const occupied = Boolean(s.member);
 
               return (
-                <div key={s.id} className="aspect-square rounded-2xl border border-white/10 bg-black/50 overflow-hidden relative">
+                <div
+                  key={s.id}
+                  className={cx(
+                    "aspect-square rounded-2xl border border-white/10 bg-black/50 overflow-hidden relative",
+                    selectedSlot === s.id && "ring-1 ring-rose-400/40"
+                  )}
+                >
                   <div className="absolute left-3 top-3 rounded-full border border-white/10 bg-black/50 px-2.5 py-1 text-[11px] font-bold text-white/80">
-                    {s.id <= 6 ? `Place ${s.id}` : `Extra ${s.id - 6}`}
+                    {slotLabel(s.id)}
                   </div>
 
-                  {isMe ? (
-                    <video ref={videoRef} autoPlay muted playsInline className={cx("w-full h-full object-cover", !cam && "opacity-20 blur-sm")} />
+                  {selectedSlot === s.id && videoRef.current?.srcObject ? (
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className={cx("w-full h-full object-cover", !cam && "opacity-20 blur-sm")}
+                    />
                   ) : occupied ? (
                     <div className="flex h-full w-full flex-col items-center justify-center text-center p-4">
                       <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
                         <Users className="h-6 w-6 text-white/70" />
                       </div>
-                      <div className="max-w-[90%] truncate text-sm font-black">{s.member?.pseudo || "Membre"}</div>
+                      <div className="max-w-[90%] truncate text-sm font-black">
+                        {s.member?.pseudo || "Membre"}
+                      </div>
                       <div className="mt-1 text-[11px] text-white/45">Occupé</div>
                     </div>
                   ) : (
@@ -601,10 +780,10 @@ export default function RoomPage() {
                       <div className="text-sm font-black text-white/85">Libre</div>
 
                       <button
-                        onClick={() => joinSlot(s.id)}
+                        onClick={() => requestJoinSlot(s.id)}
                         className="mt-4 rounded-xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-xs font-black text-black transition hover:opacity-95"
                       >
-                        Rejoindre
+                        {selectedSlot ? "Changer ici" : "Rejoindre"}
                       </button>
                     </div>
                   )}
@@ -613,6 +792,7 @@ export default function RoomPage() {
             })}
           </div>
 
+          {/* Cam/mic */}
           <div className="flex flex-wrap gap-3">
             <button
               onClick={toggleCam}
@@ -647,30 +827,46 @@ export default function RoomPage() {
             </button>
           </div>
 
+          {/* CHAT */}
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
             <div className="mb-3 text-lg font-black">Chat</div>
 
-            <div ref={chatBoxRef} className="h-56 overflow-auto rounded-2xl border border-white/10 bg-black/30 p-3">
+            <div
+              ref={chatBoxRef}
+              className="h-64 overflow-auto rounded-2xl border border-white/10 bg-black/30 p-3"
+            >
               {messages.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-white/55">Aucun message.</div>
+                <div className="h-full flex items-center justify-center text-sm text-white/55">
+                  Aucun message.
+                </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {messages.map((m) => {
-                    const mine = m.user_id === userId;
+                    const mine = m.user_id === myUserId;
+                    const p = profilesById[m.user_id] || { pseudo: m.pseudo || "Membre" };
+
                     return (
                       <div key={m.id} className={cx("flex", mine ? "justify-end" : "justify-start")}>
                         <div
                           className={cx(
-                            "max-w-[85%] rounded-2xl px-3 py-2 text-sm",
+                            "max-w-[88%] rounded-2xl px-3 py-2 text-sm",
                             mine
                               ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
-                              : "border border-white/10 bg-white/10"
+                              : "border border-white/10 bg-white/10 text-white"
                           )}
                         >
-                          <div className={cx("text-[11px] font-bold mb-1", mine ? "text-black/70" : "text-white/60")}>
-                            {m.pseudo || "Membre"}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className={cx(mine ? "text-black/80" : "text-white/85")}>
+                              <ProfileName profile={p} size="sm" showTitle />
+                            </div>
+                            <div className={cx("text-[11px] font-bold", mine ? "text-black/60" : "text-white/45")}>
+                              {formatMsgTime(m.created_at)}
+                            </div>
                           </div>
-                          <div className="whitespace-pre-wrap leading-6">{m.content}</div>
+
+                          <div className="mt-2 whitespace-pre-wrap leading-6">
+                            {m.content}
+                          </div>
                         </div>
                       </div>
                     );

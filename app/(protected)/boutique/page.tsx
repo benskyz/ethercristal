@@ -3,30 +3,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Crown,
-  Gem,
-  Shield,
   ShoppingBag,
+  Crown,
   Sparkles,
-  Wand2,
+  Gem,
   Zap,
-  Check,
-  X,
+  Wand2,
   RefreshCw,
+  Shield,
+  X,
+  Check,
   Lock,
 } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import { SHOP, getItemsByCategory, getShopItemByKey, rarityBadgeClass, ShopItem } from "@/lib/shop";
-import ProfileName from "@/components/ProfileName";
+import ProfileName, { DisplayProfile } from "@/components/ProfileName";
+import {
+  getItemsByCategory,
+  getShopItemByKey,
+  rarityBadgeClass,
+  ShopItem,
+} from "@/lib/shop";
 
 const supabase = requireSupabaseBrowserClient();
 
-type ProfileRow = {
+type ProfileRow = DisplayProfile & {
   id: string;
-  pseudo?: string | null;
   credits?: number | null;
-  is_admin?: boolean | null;
-  role?: string | null;
+  vip_expires_at?: string | null;
 
   active_name_fx_key?: string | null;
   active_badge_key?: string | null;
@@ -34,8 +37,6 @@ type ProfileRow = {
 
   master_title?: string | null;
   master_title_style?: string | null;
-
-  vip_expires_at?: string | null;
 };
 
 type InventoryRow = {
@@ -47,6 +48,13 @@ type InventoryRow = {
 
 function cx(...c: Array<string | false | null | undefined>) {
   return c.filter(Boolean).join(" ");
+}
+
+function isVipActive(vip_expires_at?: string | null) {
+  if (!vip_expires_at) return false;
+  const d = new Date(vip_expires_at);
+  if (Number.isNaN(d.getTime())) return false;
+  return d > new Date();
 }
 
 type Tab = "effects" | "vip" | "master";
@@ -69,6 +77,7 @@ export default function BoutiquePage() {
 
   const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
   const credits = profile?.credits ?? 0;
+  const vipOk = isVipActive(profile?.vip_expires_at) || isAdmin;
 
   const ownedKeys = useMemo(() => new Set(inventory.map((x) => x.item_key)), [inventory]);
 
@@ -83,22 +92,28 @@ export default function BoutiquePage() {
   const vipPlans = useMemo(() => getItemsByCategory("vip_plan"), []);
   const masterEther = useMemo(() => getItemsByCategory("master_ether"), []);
 
+  async function getAuthedUserOrRedirect() {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+      router.push("/enter");
+      return null;
+    }
+    return user;
+  }
+
   async function loadAll() {
     setLoading(true);
     setError("");
     setInfo("");
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.push("/enter");
-      return;
-    }
+    const user = await getAuthedUserOrRedirect();
+    if (!user) return;
 
     const [pRes, invRes] = await Promise.all([
       supabase
         .from("profiles")
         .select(
-          "id, pseudo, credits, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style, vip_expires_at"
+          "id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
         )
         .eq("id", user.id)
         .maybeSingle(),
@@ -109,7 +124,7 @@ export default function BoutiquePage() {
     ]);
 
     if (pRes.error) setError(pRes.error.message);
-    else setProfile((pRes.data as ProfileRow) ?? null);
+    else setProfile((pRes.data as any) ?? null);
 
     if (invRes.error) setError((prev) => prev || invRes.error!.message);
     else setInventory((invRes.data ?? []) as InventoryRow[]);
@@ -128,6 +143,7 @@ export default function BoutiquePage() {
     setError("");
     setInfo("");
   }
+
   function closeModal() {
     setModalOpen(false);
     setModalItem(null);
@@ -137,13 +153,13 @@ export default function BoutiquePage() {
     if (!profile?.id) return;
     if (ownedKeys.has(item.key)) return;
 
-    const ins = await supabase.from("inventory_items").insert({
+    const { error } = await supabase.from("inventory_items").insert({
       user_id: profile.id,
       item_key: item.key,
       equipped: false,
     });
 
-    if (ins.error) throw new Error(ins.error.message);
+    if (error) throw new Error(error.message);
 
     setInventory((prev) => [
       ...prev,
@@ -176,12 +192,16 @@ export default function BoutiquePage() {
 
       const nextCredits = (profile.credits ?? 0) - item.price;
 
-      const upd = await supabase.from("profiles").update({ credits: nextCredits }).eq("id", profile.id);
+      const upd = await supabase
+        .from("profiles")
+        .update({ credits: nextCredits })
+        .eq("id", profile.id);
+
       if (upd.error) throw new Error(upd.error.message);
 
       await addToInventoryIfMissing(item);
 
-      setProfile((p) => (p ? { ...p, credits: nextCredits } : p));
+      setProfile((p) => (p ? ({ ...p, credits: nextCredits } as any) : p));
       setInfo(`Achat réussi : ${item.name} ✅`);
     } catch (e: any) {
       setError(e?.message || "Erreur achat.");
@@ -189,6 +209,16 @@ export default function BoutiquePage() {
       setBusyKey(null);
       closeModal();
     }
+  }
+
+  function isActive(item: ShopItem) {
+    if (!profile) return false;
+    if (item.category === "name_fx") return profile.active_name_fx_key === item.key;
+    if (item.category === "badge") return profile.active_badge_key === item.key;
+    if (item.category === "title") return profile.active_title_key === item.key;
+    if (item.category === "master_ether") return Boolean(isAdmin && profile.master_title === (item.titleText ?? item.name));
+    if (item.category === "vip_plan") return vipOk;
+    return false;
   }
 
   async function activate(item: ShopItem) {
@@ -199,27 +229,26 @@ export default function BoutiquePage() {
     setInfo("");
 
     try {
-      if (item.requiresMaster && !isAdmin) {
+      if (item.category === "master_ether" && !isAdmin) {
         setError("Réservé au Maître Ether.");
         return;
       }
 
-      // si item public => doit être possédé
-      const mustOwn = item.category !== "master_ether" && item.category !== "vip_plan";
-      if (mustOwn && !ownedKeys.has(item.key)) {
-        setError("Tu dois acheter avant d’activer.");
-        return;
+      // pour les items publics, faut posséder
+      if (item.category !== "vip_plan" && item.category !== "master_ether") {
+        if (!ownedKeys.has(item.key)) {
+          setError("Tu dois acheter avant d’activer.");
+          return;
+        }
       }
 
-      // Active dans profiles (1 seul par type)
-      const patch: Partial<ProfileRow> = {};
+      const patch: any = {};
 
       if (item.category === "name_fx") patch.active_name_fx_key = item.key;
       if (item.category === "badge") patch.active_badge_key = item.key;
       if (item.category === "title") patch.active_title_key = item.key;
 
       if (item.category === "master_ether") {
-        // Titre perso maître
         patch.master_title = item.titleText ?? item.name;
         patch.master_title_style = item.previewClass ?? "text-white/70";
       }
@@ -227,10 +256,40 @@ export default function BoutiquePage() {
       const upd = await supabase.from("profiles").update(patch).eq("id", profile.id);
       if (upd.error) throw new Error(upd.error.message);
 
-      setProfile((p) => (p ? { ...p, ...patch } : p));
+      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
       setInfo(`Activé : ${item.name} ✨`);
     } catch (e: any) {
       setError(e?.message || "Erreur activation.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function deactivateCategory(cat: "name_fx" | "badge" | "title" | "master_ether") {
+    if (!profile?.id) return;
+
+    setBusyKey(`off_${cat}`);
+    setError("");
+    setInfo("");
+
+    try {
+      const patch: any = {};
+      if (cat === "name_fx") patch.active_name_fx_key = null;
+      if (cat === "badge") patch.active_badge_key = null;
+      if (cat === "title") patch.active_title_key = null;
+      if (cat === "master_ether") {
+        if (!isAdmin) return;
+        patch.master_title = null;
+        patch.master_title_style = null;
+      }
+
+      const upd = await supabase.from("profiles").update(patch).eq("id", profile.id);
+      if (upd.error) throw new Error(upd.error.message);
+
+      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
+      setInfo("Désactivé ✅");
+    } catch (e: any) {
+      setError(e?.message || "Erreur désactivation.");
     } finally {
       setBusyKey(null);
     }
@@ -257,7 +316,6 @@ export default function BoutiquePage() {
         return;
       }
 
-      // calc new expiry
       const now = new Date();
       const currentExpiry = profile.vip_expires_at ? new Date(profile.vip_expires_at) : null;
       const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
@@ -272,7 +330,9 @@ export default function BoutiquePage() {
 
       if (upd.error) throw new Error(upd.error.message);
 
-      setProfile((p) => (p ? { ...p, credits: nextCredits, vip_expires_at: next.toISOString() } : p));
+      setProfile((p) =>
+        p ? ({ ...p, credits: nextCredits, vip_expires_at: next.toISOString() } as any) : p
+      );
       setInfo(`VIP activé (${days} jours) 👑`);
     } catch (e: any) {
       setError(e?.message || "Erreur VIP.");
@@ -281,114 +341,13 @@ export default function BoutiquePage() {
     }
   }
 
-  function previewIcon(item: ShopItem) {
-    if (item.category === "vip_plan") return <Crown className="h-5 w-5 text-amber-200" />;
-    if (item.category === "name_fx") return <Sparkles className="h-5 w-5 text-fuchsia-200" />;
-    if (item.category === "badge") return <Gem className="h-5 w-5 text-cyan-200" />;
-    if (item.category === "title") return <Zap className="h-5 w-5 text-rose-200" />;
-    if (item.category === "master_ether") return <Wand2 className="h-5 w-5 text-violet-200" />;
-    return <ShoppingBag className="h-5 w-5 text-white/70" />;
-  }
-
-  const vipStatus = useMemo(() => {
-    if (!profile?.vip_expires_at) return "Non VIP";
-    const exp = new Date(profile.vip_expires_at);
-    if (Number.isNaN(exp.getTime())) return "Non VIP";
-    return exp > new Date() ? `VIP jusqu’au ${exp.toLocaleDateString("fr-CA")}` : "VIP expiré";
-  }, [profile?.vip_expires_at]);
+  const preview = useMemo(() => {
+    // show profile preview (uses ProfileName)
+    return profile;
+  }, [profile]);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl sm:p-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.16),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]" />
-
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
-              <ShoppingBag className="h-3.5 w-3.5" />
-              Shop
-            </div>
-
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
-              Boutique & VIP
-            </h1>
-
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
-              Effets premium, badges, titres… et accès VIP. Activation = affichage partout.
-            </p>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                {credits} crédits
-              </span>
-              <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-xs font-black text-amber-200">
-                {vipStatus}
-              </span>
-              {isAdmin ? (
-                <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs font-black text-violet-200">
-                  Maître Ether
-                </span>
-              ) : null}
-            </div>
-
-            {/* Preview name (uses ProfileName) */}
-            {profile ? (
-              <div className="mt-6 rounded-[28px] border border-white/10 bg-black/30 p-5">
-                <div className="text-xs uppercase tracking-[0.22em] text-white/40">Aperçu</div>
-                <div className="mt-2">
-                  <ProfileName profile={profile} size="lg" />
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard")}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
-            >
-              <Shield className="h-4 w-4" />
-              Dashboard
-            </button>
-
-            <button
-              type="button"
-              onClick={loadAll}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Actualiser
-            </button>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="relative mt-6 flex flex-wrap gap-2">
-          <TabButton active={tab === "effects"} onClick={() => setTab("effects")} label="Effets" />
-          <TabButton active={tab === "vip"} onClick={() => setTab("vip")} label="VIP" />
-          <TabButton
-            active={tab === "master"}
-            onClick={() => setTab("master")}
-            label="Maître Ether"
-            locked={!isAdmin}
-          />
-        </div>
-      </section>
-
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      ) : null}
-
-      {info ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          {info}
-        </div>
-      ) : null}
-
       {/* Modal achat */}
       {modalOpen && modalItem ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
@@ -442,7 +401,101 @@ export default function BoutiquePage() {
         </div>
       ) : null}
 
-      {/* CONTENT */}
+      {/* Header */}
+      <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl sm:p-8">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.16),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%)]" />
+        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
+              <ShoppingBag className="h-3.5 w-3.5" />
+              Boutique
+            </div>
+
+            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
+              Effets & VIP
+            </h1>
+
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
+              Achat → inventaire. Activation → pseudo stylé partout.
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
+                {credits} crédits
+              </span>
+              <span className={cx(
+                "rounded-full border px-3 py-1 text-xs font-black",
+                vipOk ? "border-amber-400/20 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/10 text-white/55"
+              )}>
+                {vipOk ? "VIP actif" : "Non VIP"}
+              </span>
+              {isAdmin ? (
+                <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs font-black text-violet-200">
+                  Maître Ether
+                </span>
+              ) : null}
+            </div>
+
+            {preview ? (
+              <div className="mt-6 rounded-[28px] border border-white/10 bg-black/30 p-5">
+                <div className="text-xs uppercase tracking-[0.22em] text-white/40">Aperçu</div>
+                <div className="mt-2">
+                  <ProfileName profile={preview} size="lg" showTitle />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/inventaire")}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
+            >
+              <Gem className="h-4 w-4" />
+              Inventaire
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard")}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
+            >
+              <Shield className="h-4 w-4" />
+              Dashboard
+            </button>
+
+            <button
+              type="button"
+              onClick={loadAll}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Actualiser
+            </button>
+          </div>
+        </div>
+
+        <div className="relative mt-6 flex flex-wrap gap-2">
+          <TabButton active={tab === "effects"} onClick={() => setTab("effects")} label="Effets" icon={<Sparkles className="h-4 w-4" />} />
+          <TabButton active={tab === "vip"} onClick={() => setTab("vip")} label="VIP" icon={<Crown className="h-4 w-4" />} />
+          <TabButton
+            active={tab === "master"}
+            onClick={() => setTab("master")}
+            label="Maître Ether"
+            icon={<Wand2 className="h-4 w-4" />}
+            locked={!isAdmin}
+          />
+        </div>
+      </section>
+
+      {error ? (
+        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
+      ) : null}
+      {info ? (
+        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{info}</div>
+      ) : null}
+
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 9 }).map((_, i) => (
@@ -451,18 +504,23 @@ export default function BoutiquePage() {
         </div>
       ) : tab === "effects" ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {effects.map((item) => (
-            <ItemCard
-              key={item.key}
-              item={item}
-              profile={profile}
-              owned={ownedKeys.has(item.key)}
-              busy={busyKey === item.key}
-              onBuy={() => openBuy(item)}
-              onActivate={() => activate(item)}
-              icon={previewIcon(item)}
-            />
-          ))}
+          {effects.map((item) => {
+            const owned = ownedKeys.has(item.key);
+            const active = isActive(item);
+
+            return (
+              <ShopCard
+                key={item.key}
+                item={item}
+                owned={owned}
+                active={active}
+                busy={busyKey === item.key}
+                onBuy={() => openBuy(item)}
+                onActivate={() => activate(item)}
+                onDeactivate={() => deactivateCategory(item.category as any)}
+              />
+            );
+          })}
         </div>
       ) : tab === "vip" ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -476,33 +534,29 @@ export default function BoutiquePage() {
             />
           ))}
         </div>
+      ) : !isAdmin ? (
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6">
+          <div className="flex items-center gap-2 font-black text-white/85">
+            <Lock className="h-4 w-4" />
+            Réservé
+          </div>
+          <p className="mt-2 text-sm text-white/60">Les effets Ether sont réservés au Maître Ether.</p>
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {!isAdmin ? (
-            <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6">
-              <div className="flex items-center gap-2 text-white/80 font-black">
-                <Lock className="h-4 w-4" />
-                Réservé
-              </div>
-              <p className="mt-2 text-sm text-white/60">
-                Les titres Ether sont réservés au Maître Ether.
-              </p>
-            </div>
-          ) : (
-            masterEther.map((item) => (
-              <ItemCard
-                key={item.key}
-                item={item}
-                profile={profile}
-                owned={true}
-                busy={busyKey === item.key}
-                onBuy={undefined}
-                onActivate={() => activate(item)}
-                icon={previewIcon(item)}
-                forceMaster
-              />
-            ))
-          )}
+          {masterEther.map((item) => (
+            <ShopCard
+              key={item.key}
+              item={item}
+              owned={true}
+              active={isActive(item)}
+              busy={busyKey === item.key}
+              onBuy={undefined}
+              onActivate={() => activate(item)}
+              onDeactivate={() => deactivateCategory("master_ether")}
+              forceMaster
+            />
+          ))}
         </div>
       )}
     </div>
@@ -513,11 +567,13 @@ function TabButton({
   active,
   onClick,
   label,
+  icon,
   locked,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
+  icon: React.ReactNode;
   locked?: boolean;
 }) {
   return (
@@ -525,43 +581,38 @@ function TabButton({
       type="button"
       onClick={locked ? undefined : onClick}
       className={cx(
-        "rounded-2xl border px-4 py-2 text-sm font-black transition",
-        active
-          ? "border-white/10 bg-white/15 text-white"
-          : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+        "inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-black transition",
+        active ? "border-white/10 bg-white/15 text-white" : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
         locked && "opacity-60 cursor-not-allowed"
       )}
     >
+      {icon}
       {label}
       {locked ? " 🔒" : ""}
     </button>
   );
 }
 
-function ItemCard({
+function ShopCard({
   item,
-  profile,
   owned,
+  active,
   busy,
   onBuy,
   onActivate,
-  icon,
+  onDeactivate,
   forceMaster,
 }: {
   item: ShopItem;
-  profile: any;
   owned: boolean;
+  active: boolean;
   busy: boolean;
   onBuy?: () => void;
   onActivate: () => void;
-  icon: React.ReactNode;
+  onDeactivate: () => void;
   forceMaster?: boolean;
 }) {
-  const active =
-    (item.category === "name_fx" && profile?.active_name_fx_key === item.key) ||
-    (item.category === "badge" && profile?.active_badge_key === item.key) ||
-    (item.category === "title" && profile?.active_title_key === item.key) ||
-    (item.category === "master_ether" && profile?.master_title === item.titleText);
+  const canActivate = forceMaster ? true : owned;
 
   return (
     <article className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/[0.06]">
@@ -584,6 +635,11 @@ function ItemCard({
                 POSSÉDÉ
               </span>
             ) : null}
+            {forceMaster ? (
+              <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2.5 py-1 text-[10px] font-black text-violet-200">
+                ETHER
+              </span>
+            ) : null}
           </div>
 
           <h3 className="mt-4 text-2xl font-black text-white">{item.name}</h3>
@@ -591,24 +647,27 @@ function ItemCard({
         </div>
 
         <div className="grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/5">
-          {icon}
+          {item.category === "name_fx" ? (
+            <Sparkles className="h-5 w-5 text-fuchsia-200" />
+          ) : item.category === "badge" ? (
+            <Gem className="h-5 w-5 text-cyan-200" />
+          ) : item.category === "title" ? (
+            <Zap className="h-5 w-5 text-rose-200" />
+          ) : (
+            <Wand2 className="h-5 w-5 text-violet-200" />
+          )}
         </div>
       </div>
 
-      {/* preview */}
       <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
         <div className="text-xs uppercase tracking-[0.22em] text-white/40">Preview</div>
         {item.category === "name_fx" ? (
           <div className={cx("mt-2 text-2xl font-black", item.previewClass || "text-white")}>
-            {profile?.pseudo || "Membre"}
+            Pseudo
           </div>
         ) : item.category === "badge" ? (
           <div className="mt-2">
             <span className={item.badgeClass || "text-white/70"}>{item.name}</span>
-          </div>
-        ) : item.category === "title" ? (
-          <div className="mt-2 text-xs font-black tracking-[0.22em] uppercase text-white/70">
-            {item.titleText}
           </div>
         ) : (
           <div className={cx("mt-2 text-xs font-black tracking-[0.22em] uppercase", item.previewClass || "text-white/70")}>
@@ -618,9 +677,7 @@ function ItemCard({
       </div>
 
       <div className="mt-5 flex items-center justify-between gap-3">
-        <div className="text-sm font-black text-white/80">
-          {forceMaster ? "Réservé Maître" : `${item.price} crédits`}
-        </div>
+        <div className="text-sm font-black text-white/80">{forceMaster ? "Réservé Maître" : `${item.price} crédits`}</div>
 
         <div className="flex gap-2">
           {!forceMaster && !owned ? (
@@ -633,20 +690,30 @@ function ItemCard({
               <ShoppingBag className="h-4 w-4" />
               Acheter
             </button>
+          ) : active ? (
+            <button
+              type="button"
+              onClick={onDeactivate}
+              disabled={busy}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/15 disabled:opacity-60"
+            >
+              <X className="h-4 w-4" />
+              Off
+            </button>
           ) : (
             <button
               type="button"
               onClick={onActivate}
-              disabled={busy || active}
+              disabled={busy || !canActivate}
               className={cx(
                 "inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-black transition disabled:opacity-60",
-                active
-                  ? "border border-emerald-400/20 bg-emerald-500/10 text-emerald-200"
-                  : "border border-white/10 bg-white/10 text-white/85 hover:bg-white/15"
+                canActivate
+                  ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black hover:opacity-95"
+                  : "border border-white/10 bg-white/5 text-white/45 cursor-not-allowed"
               )}
             >
               <Wand2 className="h-4 w-4" />
-              {active ? "Actif" : "Activer"}
+              Activer
             </button>
           )}
         </div>
@@ -711,13 +778,4 @@ function VipCard({
       </div>
     </article>
   );
-}
-
-function previewIcon(item: ShopItem) {
-  if (item.category === "vip_plan") return <Crown className="h-5 w-5 text-amber-200" />;
-  if (item.category === "name_fx") return <Sparkles className="h-5 w-5 text-fuchsia-200" />;
-  if (item.category === "badge") return <Gem className="h-5 w-5 text-cyan-200" />;
-  if (item.category === "title") return <Zap className="h-5 w-5 text-rose-200" />;
-  if (item.category === "master_ether") return <Wand2 className="h-5 w-5 text-violet-200" />;
-  return <ShoppingBag className="h-5 w-5 text-white/70" />;
 }

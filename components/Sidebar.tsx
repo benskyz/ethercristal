@@ -1,297 +1,270 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import {
+  LayoutDashboard,
+  Users,
+  ShoppingBag,
+  MessageCircle,
+  User,
+  Crown,
+  Settings,
+  Shield,
+  LogOut,
+  Sparkles,
+  RefreshCw,
+} from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import ProfileName, { DisplayProfile } from "@/components/ProfileName";
 
 const supabase = requireSupabaseBrowserClient();
 
-type ProfileRow = {
-  pseudo?: string | null;
+type ProfileRow = DisplayProfile & {
+  id: string;
   credits?: number | null;
-  is_vip?: boolean | null;
-  is_admin?: boolean | null;
+  vip_expires_at?: string | null;
 };
 
-type NavItem = {
-  href: string;
-  label: string;
-  adminOnly?: boolean;
-};
+function cx(...c: Array<string | false | null | undefined>) {
+  return c.filter(Boolean).join(" ");
+}
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/profile", label: "Profil" },
-  { href: "/messages", label: "Messages" },
-  { href: "/salons", label: "Salons" },
-  { href: "/desir", label: "Désir Intense" },
-  { href: "/boutique", label: "Boutique" },
-  { href: "/inventaire", label: "Inventaire" },
-  { href: "/vip", label: "VIP" },
-  { href: "/admin", label: "Admin", adminOnly: true },
-];
+function isVipActive(vip_expires_at?: string | null) {
+  if (!vip_expires_at) return false;
+  const d = new Date(vip_expires_at);
+  if (Number.isNaN(d.getTime())) return false;
+  return d > new Date();
+}
 
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
+function formatVip(vip_expires_at?: string | null) {
+  if (!vip_expires_at) return "Non VIP";
+  const d = new Date(vip_expires_at);
+  if (Number.isNaN(d.getTime())) return "Non VIP";
+  if (d <= new Date()) return "VIP expiré";
+  return `VIP → ${d.toLocaleDateString("fr-CA")}`;
 }
 
 export default function Sidebar() {
+  const router = useRouter();
   const pathname = usePathname();
 
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
   const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
+  const [error, setError] = useState("");
 
-  useEffect(() => {
-    let mounted = true;
+  const credits = profile?.credits ?? 0;
+  const vipOk = isVipActive(profile?.vip_expires_at);
+  const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
 
-    async function loadProfile() {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+  const NAV = useMemo(() => {
+    const items = [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/salons", label: "Salons", icon: Users },
+      { href: "/desir", label: "Désir Intense", icon: Sparkles },
+      { href: "/boutique", label: "Boutique", icon: ShoppingBag },
+      { href: "/messages", label: "Messages", icon: MessageCircle },
+      { href: "/profile", label: "Profil", icon: User },
+      { href: "/vip", label: "VIP", icon: Crown },
+      { href: "/options", label: "Options", icon: Settings },
+    ];
 
-        if (!mounted || !user) return;
-
-        const { data } = await supabase
-          .from("profiles")
-          .select("pseudo, credits, is_vip, is_admin")
-          .eq("id", user.id)
-          .single();
-
-        if (mounted && data) {
-          setProfile(data as ProfileRow);
-        }
-      } catch {
-        if (mounted) {
-          setProfile(null);
-        }
-      }
+    if (isAdmin) {
+      items.unshift({ href: "/admin", label: "Admin", icon: Shield });
     }
 
-    loadProfile();
+    return items;
+  }, [isAdmin]);
 
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  async function loadProfile() {
+    setError("");
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
 
-  async function handleLogout() {
-    if (loggingOut) return;
-
-    setLoggingOut(true);
-
-    try {
-      await supabase.auth.signOut();
-      window.location.href = "/enter";
-    } catch {
-      setLoggingOut(false);
+    if (authErr || !user) {
+      router.push("/enter");
+      return;
     }
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select(
+        "id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
+      )
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      setError(error.message);
+      setProfile(null);
+    } else {
+      setProfile((data as ProfileRow) ?? null);
+    }
+
+    setLoading(false);
   }
 
-  const visibleNavItems = useMemo(() => {
-    return NAV_ITEMS.filter((item) => {
-      if (item.adminOnly && !profile?.is_admin) return false;
-      return true;
-    });
-  }, [profile]);
+  async function refresh() {
+    setRefreshing(true);
+    await loadProfile();
+    setRefreshing(false);
+  }
 
-  function renderNavItems(isMobile = false) {
-    return visibleNavItems.map((item) => {
-      const active =
-        pathname === item.href ||
-        (item.href !== "/" && pathname.startsWith(item.href + "/"));
+  useEffect(() => {
+    loadProfile();
 
-      return (
-        <Link
-          key={item.href}
-          href={item.href}
-          className={cx(
-            "flex items-center rounded-2xl px-4 py-3 text-sm font-bold transition-all duration-200",
-            isMobile
-              ? active
-                ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black shadow-[0_10px_30px_rgba(255,60,120,0.25)]"
-                : "bg-white/[0.04] text-white/78 hover:bg-white/[0.08] hover:text-white"
-              : active
-              ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black shadow-[0_10px_30px_rgba(255,60,120,0.25)]"
-              : "text-white/72 hover:bg-white/[0.06] hover:text-white"
-          )}
-        >
-          {item.label}
-        </Link>
-      );
-    });
+    // Realtime profile changes (optionnel, mais nice)
+    const channel = supabase
+      .channel("sidebar-profile")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles" },
+        () => loadProfile()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.push("/enter");
   }
 
   return (
-    <>
-      <div className="sticky top-0 z-40 flex items-center justify-between border-b border-white/10 bg-black/40 px-4 py-3 backdrop-blur-2xl md:hidden">
-        <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-2xl border border-white/10 bg-white/5 text-lg shadow-[0_0_30px_rgba(255,80,120,0.15)]">
-            💎
+    <aside className="sticky top-0 h-screen w-[320px] shrink-0 border-r border-white/10 bg-black/40 backdrop-blur-2xl">
+      <div className="flex h-full flex-col p-5">
+        {/* Brand */}
+        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-[0.28em] text-white/45">EtherCristal</div>
+              <div className="mt-1 text-2xl font-black text-white">NCQ LIVE</div>
+            </div>
+
+            <button
+              onClick={refresh}
+              disabled={refreshing}
+              className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10 disabled:opacity-60"
+              title="Actualiser"
+            >
+              <RefreshCw className={cx("h-4 w-4 text-white/80", refreshing && "animate-spin")} />
+            </button>
           </div>
 
-          <div>
-            <p className="text-sm font-black leading-none text-white">EtherCristal</p>
-            <p className="mt-1 text-[10px] uppercase tracking-[0.25em] text-white/35">
-              {profile?.pseudo || "Membre"}
-            </p>
+          {/* Profile card */}
+          <div className="mt-4 rounded-[24px] border border-white/10 bg-black/30 p-4">
+            {loading ? (
+              <div className="space-y-2">
+                <div className="h-4 w-2/3 rounded bg-white/10 animate-pulse" />
+                <div className="h-3 w-1/2 rounded bg-white/10 animate-pulse" />
+                <div className="mt-3 h-9 w-full rounded bg-white/10 animate-pulse" />
+              </div>
+            ) : profile ? (
+              <div className="space-y-3">
+                <ProfileName profile={profile} size="md" showTitle />
+
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
+                    {credits} crédits
+                  </span>
+
+                  <span
+                    className={cx(
+                      "rounded-full border px-3 py-1 text-xs font-black",
+                      vipOk
+                        ? "border-amber-400/20 bg-amber-500/10 text-amber-200"
+                        : "border-white/10 bg-white/10 text-white/55"
+                    )}
+                  >
+                    {formatVip(profile.vip_expires_at)}
+                  </span>
+
+                  {isAdmin ? (
+                    <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs font-black text-violet-200">
+                      Maître Ether
+                    </span>
+                  ) : null}
+                </div>
+
+                <button
+                  onClick={() => router.push("/boutique")}
+                  className="w-full rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2.5 text-sm font-black text-black hover:opacity-95"
+                >
+                  Améliorer mon style
+                </button>
+              </div>
+            ) : (
+              <div className="text-sm text-white/60">
+                Profil introuvable.
+              </div>
+            )}
+
+            {error ? (
+              <div className="mt-3 rounded-2xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-200">
+                {error}
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setMobileOpen((prev) => !prev)}
-          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white"
-        >
-          {mobileOpen ? "Fermer" : "Menu"}
-        </button>
-      </div>
+        {/* Nav */}
+        <nav className="mt-5 flex-1 space-y-2">
+          {NAV.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(item.href + "/");
+            const Icon = item.icon;
 
-      {mobileOpen ? (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => setMobileOpen(false)}
-          />
-
-          <div className="absolute left-0 top-0 h-full w-[88%] max-w-[320px] border-r border-white/10 bg-[#07070b]/95 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/5 text-xl">
-                  💎
-                </div>
-                <div>
-                  <p className="text-lg font-black text-white">EtherCristal</p>
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-white/35">
-                    Accès privé
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setMobileOpen(false)}
-                className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-white"
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cx(
+                  "group flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-black transition",
+                  active
+                    ? "border-white/10 bg-white/12 text-white"
+                    : "border-white/10 bg-white/[0.04] text-white/75 hover:bg-white/[0.07]"
+                )}
               >
-                ✕
-              </button>
-            </div>
+                <span
+                  className={cx(
+                    "grid h-9 w-9 place-items-center rounded-xl border transition",
+                    active
+                      ? "border-white/10 bg-white/10"
+                      : "border-white/10 bg-white/5 group-hover:bg-white/10"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="truncate">{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
 
-            <div className="mt-5 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-              <p className="text-sm font-bold text-white">
-                {profile?.pseudo || "Membre"}
-              </p>
+        {/* Footer */}
+        <div className="mt-4 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+          <button
+            onClick={signOut}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-200 hover:bg-red-500/15"
+          >
+            <LogOut className="h-4 w-4" />
+            Déconnexion
+          </button>
 
-              <p className="mt-1 text-xs text-white/55">
-                {profile?.credits ?? 0} crédits
-              </p>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {profile?.is_admin ? (
-                  <span className="rounded-full border border-red-400/20 bg-red-500/10 px-2.5 py-1 text-[10px] font-bold text-red-300">
-                    ADMIN
-                  </span>
-                ) : null}
-
-                {profile?.is_vip ? (
-                  <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2.5 py-1 text-[10px] font-bold text-yellow-300">
-                    VIP
-                  </span>
-                ) : null}
-
-                {!profile?.is_admin && !profile?.is_vip ? (
-                  <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/70">
-                    MEMBRE
-                  </span>
-                ) : null}
-              </div>
-            </div>
-
-            <nav className="mt-5 space-y-2">{renderNavItems(true)}</nav>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              disabled={loggingOut}
-              className="mt-5 w-full rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300 transition hover:bg-red-500/15 disabled:opacity-60"
-            >
-              {loggingOut ? "Déconnexion..." : "Se déconnecter"}
-            </button>
+          <div className="mt-3 text-center text-[11px] text-white/40">
+            EtherCristal • privé • premium
           </div>
         </div>
-      ) : null}
-
-      <aside className="hidden md:flex w-[250px] shrink-0 flex-col border-r border-white/10 bg-black/25 backdrop-blur-2xl">
-        <div className="sticky top-0 flex h-screen flex-col">
-          <div className="border-b border-white/10 px-5 py-5">
-            <div className="flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/5 text-xl shadow-[0_0_30px_rgba(255,80,120,0.15)]">
-                💎
-              </div>
-
-              <div>
-                <p className="text-lg font-black leading-none text-white">
-                  EtherCristal
-                </p>
-                <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-white/35">
-                  Accès privé
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_35px_rgba(0,0,0,0.25)]">
-              <p className="text-sm font-bold text-white">
-                {profile?.pseudo || "Membre"}
-              </p>
-
-              <p className="mt-1 text-xs text-white/55">
-                {profile?.credits ?? 0} crédits
-              </p>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {profile?.is_admin ? (
-                  <span className="rounded-full border border-red-400/20 bg-red-500/10 px-2.5 py-1 text-[10px] font-bold text-red-300">
-                    ADMIN
-                  </span>
-                ) : null}
-
-                {profile?.is_vip ? (
-                  <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2.5 py-1 text-[10px] font-bold text-yellow-300">
-                    VIP
-                  </span>
-                ) : null}
-
-                {!profile?.is_admin && !profile?.is_vip ? (
-                  <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/70">
-                    MEMBRE
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <nav className="flex-1 px-3 py-4">
-            <div className="space-y-1.5">{renderNavItems(false)}</div>
-          </nav>
-
-          <div className="border-t border-white/10 p-3">
-            <button
-              type="button"
-              onClick={handleLogout}
-              disabled={loggingOut}
-              className="w-full rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300 transition hover:bg-red-500/15 disabled:opacity-60"
-            >
-              {loggingOut ? "Déconnexion..." : "Se déconnecter"}
-            </button>
-          </div>
-        </div>
-      </aside>
-    </>
+      </div>
+    </aside>
   );
 }

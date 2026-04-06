@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import ProfileName, { DisplayProfile } from "@/components/ProfileName";
-import { Search, Send, RefreshCw, MessageCircle, Users } from "lucide-react";
+import { safeSubscribe } from "@/lib/realtime";
+import { MessageCircle, Search, Send, RefreshCw, Users, Plus } from "lucide-react";
 
 const supabase = requireSupabaseBrowserClient();
 
@@ -34,6 +35,10 @@ function fmtTime(value?: string | null) {
   return d.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
 }
 
+function isoNow() {
+  return new Date().toISOString();
+}
+
 export default function MessagesPage() {
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -41,40 +46,60 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [me, setMe] = useState<{ id: string } | null>(null);
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [meId, setMeId] = useState<string>("");
+  const [meProfile, setMeProfile] = useState<ProfileRow | null>(null);
 
   const [threads, setThreads] = useState<
-    Array<{ otherId: string; otherPseudo: string; lastAt: string; lastText: string; lastFromMe: boolean }>
+    Array<{
+      otherId: string;
+      otherPseudo: string;
+      lastAt: string;
+      lastText: string;
+      lastFromMe: boolean;
+    }>
   >([]);
 
   const [activeOtherId, setActiveOtherId] = useState<string>("");
   const [activeOtherPseudo, setActiveOtherPseudo] = useState<string>("");
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [query, setQuery] = useState("");
+  const [threadSearch, setThreadSearch] = useState("");
   const [text, setText] = useState("");
 
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
-  // ====== LOAD ======
-  async function loadAll(silent = false) {
+  // scroll chat on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  async function loadMeAndThreads(silent = false) {
     if (!silent) setLoading(true);
     setError("");
     setInfo("");
 
-    const { data: auth, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !auth?.user) {
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
+
+    if (authErr || !user) {
       router.replace("/enter");
       return;
     }
 
-    const myId = auth.user.id;
-    setMe({ id: myId });
+    const myId = user.id;
+    setMeId(myId);
 
     const [pRes, msgRes] = await Promise.all([
-      supabase.from("profiles").select("id, pseudo, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style").eq("id", myId).maybeSingle(),
+      supabase
+        .from("profiles")
+        .select(
+          "id, pseudo, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
+        )
+        .eq("id", myId)
+        .maybeSingle(),
       supabase
         .from("messages")
         .select("id, from_user_id, to_user_id, from_pseudo, to_pseudo, content, created_at")
@@ -83,7 +108,7 @@ export default function MessagesPage() {
     ]);
 
     if (pRes.error) setError(pRes.error.message);
-    else setProfile((pRes.data as any) ?? null);
+    else setMeProfile((pRes.data as any) ?? null);
 
     if (msgRes.error) {
       setError((prev) => prev || msgRes.error!.message);
@@ -95,17 +120,22 @@ export default function MessagesPage() {
 
     const all = (msgRes.data ?? []) as MessageRow[];
 
-    // Build threads (1:1) from messages
+    // Build threads map (1:1)
     const map = new Map<
       string,
-      { otherId: string; otherPseudo: string; lastAt: string; lastText: string; lastFromMe: boolean }
+      {
+        otherId: string;
+        otherPseudo: string;
+        lastAt: string;
+        lastText: string;
+        lastFromMe: boolean;
+      }
     >();
 
     for (const m of all) {
       const otherId = m.from_user_id === myId ? m.to_user_id : m.from_user_id;
       const otherPseudo =
-        (m.from_user_id === myId ? m.to_pseudo : m.from_pseudo) ||
-        "Membre";
+        (m.from_user_id === myId ? m.to_pseudo : m.from_pseudo) || "Membre";
 
       const lastAt = m.created_at ?? "";
       const lastText = m.content ?? "";
@@ -115,7 +145,6 @@ export default function MessagesPage() {
       if (!existing) {
         map.set(otherId, { otherId, otherPseudo, lastAt, lastText, lastFromMe });
       } else {
-        // compare by created_at string (ISO works lexicographically)
         if ((existing.lastAt || "") <= (lastAt || "")) {
           map.set(otherId, { otherId, otherPseudo, lastAt, lastText, lastFromMe });
         }
@@ -125,19 +154,23 @@ export default function MessagesPage() {
     const list = Array.from(map.values()).sort((a, b) => (b.lastAt || "").localeCompare(a.lastAt || ""));
     setThreads(list);
 
-    // pick default thread if none selected
-    if (!activeOtherId && list.length > 0) {
-      setActiveOtherId(list[0].otherId);
-      setActiveOtherPseudo(list[0].otherPseudo);
+    // Choose default thread if none selected
+    let nextOtherId = activeOtherId;
+    let nextOtherPseudo = activeOtherPseudo;
+
+    if (!nextOtherId && list.length > 0) {
+      nextOtherId = list[0].otherId;
+      nextOtherPseudo = list[0].otherPseudo;
+      setActiveOtherId(nextOtherId);
+      setActiveOtherPseudo(nextOtherPseudo);
     }
 
-    // load active messages
-    const activeId = activeOtherId || (list[0]?.otherId ?? "");
-    if (activeId) {
+    // Load active messages
+    if (nextOtherId) {
       const convo = all.filter(
         (m) =>
-          (m.from_user_id === myId && m.to_user_id === activeId) ||
-          (m.from_user_id === activeId && m.to_user_id === myId)
+          (m.from_user_id === myId && m.to_user_id === nextOtherId) ||
+          (m.from_user_id === nextOtherId && m.to_user_id === myId)
       );
       setMessages(convo);
     } else {
@@ -148,128 +181,124 @@ export default function MessagesPage() {
   }
 
   useEffect(() => {
-    loadAll();
+    loadMeAndThreads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // scroll chat on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
-
   async function refresh() {
     setRefreshing(true);
-    await loadAll(true);
+    await loadMeAndThreads(true);
     setRefreshing(false);
   }
 
-  // ====== REALTIME (safe) ======
+  // ===== REALTIME (SAFE) =====
   useEffect(() => {
-    if (!me?.id) return;
+    if (!meId) return;
 
     let alive = true;
-    let channel: any = null;
 
-    (async () => {
-      const myId = me.id;
-      const channelName = `messages-user-${myId}-${Date.now()}`;
+    const cleanup = safeSubscribe(supabase, `messages-user-${meId}`, (ch) => {
+      ch.on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          if (!alive) return;
+          const row = payload.new as MessageRow;
 
-      channel = supabase
-        .channel(channelName)
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "messages" },
-          (payload) => {
-            if (!alive) return;
-            const row = payload.new as MessageRow;
+          // Keep only messages that involve me
+          if (row.from_user_id !== meId && row.to_user_id !== meId) return;
 
-            // Keep only messages that involve me
-            if (row.from_user_id !== myId && row.to_user_id !== myId) return;
+          // Update threads list quickly
+          setThreads((prev) => {
+            const otherId = row.from_user_id === meId ? row.to_user_id : row.from_user_id;
+            const otherPseudo =
+              (row.from_user_id === meId ? row.to_pseudo : row.from_pseudo) || "Membre";
 
-            setMessages((prev) => {
-              // only append if belongs to current convo
-              if (!activeOtherId) return prev;
-              const belongs =
-                (row.from_user_id === myId && row.to_user_id === activeOtherId) ||
-                (row.from_user_id === activeOtherId && row.to_user_id === myId);
-              if (!belongs) return prev;
+            const entry = {
+              otherId,
+              otherPseudo,
+              lastAt: row.created_at ?? isoNow(),
+              lastText: row.content ?? "",
+              lastFromMe: row.from_user_id === meId,
+            };
 
-              const exists = prev.some((m) => m.id === row.id);
-              return exists ? prev : [...prev, row];
-            });
+            const next = [...prev];
+            const idx = next.findIndex((t) => t.otherId === otherId);
+            if (idx === -1) next.unshift(entry);
+            else {
+              next.splice(idx, 1);
+              next.unshift(entry);
+            }
+            return next;
+          });
 
-            // Update threads list quickly
-            setThreads((prev) => {
-              const otherId = row.from_user_id === myId ? row.to_user_id : row.from_user_id;
-              const otherPseudo =
-                (row.from_user_id === myId ? row.to_pseudo : row.from_pseudo) || "Membre";
+          // Append to current open convo only
+          setMessages((prev) => {
+            if (!activeOtherId) return prev;
 
-              const next = [...prev];
-              const idx = next.findIndex((t) => t.otherId === otherId);
-              const entry = {
-                otherId,
-                otherPseudo,
-                lastAt: row.created_at ?? new Date().toISOString(),
-                lastText: row.content ?? "",
-                lastFromMe: row.from_user_id === myId,
-              };
+            const belongs =
+              (row.from_user_id === meId && row.to_user_id === activeOtherId) ||
+              (row.from_user_id === activeOtherId && row.to_user_id === meId);
 
-              if (idx === -1) next.unshift(entry);
-              else {
-                next.splice(idx, 1);
-                next.unshift(entry);
-              }
-              return next;
-            });
-          }
-        )
-        .subscribe();
-    })();
+            if (!belongs) return prev;
+
+            const exists = prev.some((m) => m.id === row.id);
+            return exists ? prev : [...prev, row];
+          });
+        }
+      );
+    });
 
     return () => {
       alive = false;
-      if (channel) supabase.removeChannel(channel);
+      cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.id, activeOtherId]);
+  }, [meId, activeOtherId]);
 
-  // ====== THREAD SELECT ======
+  // ===== THREAD SELECT =====
   async function openThread(otherId: string, otherPseudo: string) {
-    if (!me?.id) return;
+    if (!meId) return;
+
     setActiveOtherId(otherId);
     setActiveOtherPseudo(otherPseudo);
+    setError("");
+    setInfo("");
 
-    // reload conversation from DB to be safe
-    const myId = me.id;
     const { data, error } = await supabase
       .from("messages")
       .select("id, from_user_id, to_user_id, from_pseudo, to_pseudo, content, created_at")
-      .or(`and(from_user_id.eq.${myId},to_user_id.eq.${otherId}),and(from_user_id.eq.${otherId},to_user_id.eq.${myId})`)
+      .or(`and(from_user_id.eq.${meId},to_user_id.eq.${otherId}),and(from_user_id.eq.${otherId},to_user_id.eq.${meId})`)
       .order("created_at", { ascending: true });
 
-    if (!error) setMessages((data ?? []) as MessageRow[]);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setMessages((data ?? []) as MessageRow[]);
   }
 
-  // ====== SEND ======
+  // ===== SEND =====
   async function send() {
-    if (!me?.id) return;
+    if (!meId) return;
     setError("");
     setInfo("");
 
     const content = text.trim();
     if (!content) return;
+
     if (!activeOtherId) {
       setError("Choisis une conversation.");
       return;
     }
 
     try {
-      const fromPseudo = profile?.pseudo || "Membre";
+      const fromPseudo = meProfile?.pseudo || "Membre";
 
       const { data, error } = await supabase
         .from("messages")
         .insert({
-          from_user_id: me.id,
+          from_user_id: meId,
           to_user_id: activeOtherId,
           from_pseudo: fromPseudo,
           to_pseudo: activeOtherPseudo || "Membre",
@@ -284,6 +313,25 @@ export default function MessagesPage() {
         const row = data as MessageRow;
         setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
         setText("");
+
+        // update thread top
+        setThreads((prev) => {
+          const entry = {
+            otherId: activeOtherId,
+            otherPseudo: activeOtherPseudo || "Membre",
+            lastAt: row.created_at ?? isoNow(),
+            lastText: row.content ?? "",
+            lastFromMe: true,
+          };
+          const next = [...prev];
+          const idx = next.findIndex((t) => t.otherId === activeOtherId);
+          if (idx === -1) next.unshift(entry);
+          else {
+            next.splice(idx, 1);
+            next.unshift(entry);
+          }
+          return next;
+        });
       }
     } catch (e: any) {
       setError(e?.message || "Impossible d’envoyer.");
@@ -291,44 +339,57 @@ export default function MessagesPage() {
   }
 
   const filteredThreads = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = threadSearch.trim().toLowerCase();
     if (!q) return threads;
-    return threads.filter((t) => `${t.otherPseudo} ${t.lastText}`.toLowerCase().includes(q));
-  }, [threads, query]);
+    return threads.filter((t) =>
+      `${t.otherPseudo} ${t.lastText}`.toLowerCase().includes(q)
+    );
+  }, [threads, threadSearch]);
 
   return (
     <div className="space-y-6">
-      {/* Header premium */}
+      {/* Header premium (same vibe as /enter) */}
       <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-8">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
         <div className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-          <div>
+          <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
               <MessageCircle className="h-3.5 w-3.5" />
               Messages
             </div>
+
             <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
               Conversations privées
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
-              Propre, rapide, stable. Realtime sécurisé (pas de crash).
+              Propre, rapide, stable. Realtime sans crash.
             </p>
 
-            {profile ? (
+            {meProfile ? (
               <div className="mt-5">
-                <ProfileName profile={profile} size="md" showTitle showBadge />
+                <ProfileName profile={meProfile} size="md" showTitle showBadge />
               </div>
             ) : null}
           </div>
 
-          <button
-            onClick={refresh}
-            disabled={refreshing}
-            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10 disabled:opacity-70"
-          >
-            <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
-            Actualiser
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={refresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10 disabled:opacity-70"
+            >
+              <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+              Actualiser
+            </button>
+
+            <button
+              onClick={() => setInfo("Ajout de ‘nouvelle conversation’ après ton OK.")}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
+            >
+              <Plus className="h-4 w-4" />
+              Nouveau
+            </button>
+          </div>
         </div>
       </section>
 
@@ -344,13 +405,13 @@ export default function MessagesPage() {
       ) : null}
 
       {loading ? (
-        <div className="grid gap-4 lg:grid-cols-[0.9fr_1.4fr]">
+        <div className="grid gap-4 lg:grid-cols-[0.95fr_1.35fr]">
           <div className="h-[560px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
           <div className="h-[560px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[0.9fr_1.4fr]">
-          {/* Left: threads */}
+        <div className="grid gap-4 lg:grid-cols-[0.95fr_1.35fr]">
+          {/* Threads */}
           <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
             <div className="flex items-center justify-between gap-3">
               <div className="text-xl font-black text-white">Conversations</div>
@@ -362,8 +423,8 @@ export default function MessagesPage() {
             <div className="mt-4 relative">
               <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
               <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                value={threadSearch}
+                onChange={(e) => setThreadSearch(e.target.value)}
                 placeholder="Chercher..."
                 className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
               />
@@ -394,7 +455,8 @@ export default function MessagesPage() {
                             {t.otherPseudo}
                           </div>
                           <div className="mt-1 truncate text-xs text-white/55">
-                            {t.lastFromMe ? "Toi: " : ""}{t.lastText}
+                            {t.lastFromMe ? "Toi: " : ""}
+                            {t.lastText}
                           </div>
                         </div>
                         <div className="text-[11px] text-white/45">
@@ -408,17 +470,11 @@ export default function MessagesPage() {
             </div>
           </section>
 
-          {/* Right: chat */}
+          {/* Chat */}
           <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-                  Conversation
-                </div>
-                <div className="mt-1 text-xl font-black text-white">
-                  {activeOtherId ? activeOtherPseudo : "Aucune sélection"}
-                </div>
-              </div>
+            <div className="text-xs uppercase tracking-[0.22em] text-white/45">Conversation</div>
+            <div className="mt-1 text-xl font-black text-white">
+              {activeOtherId ? activeOtherPseudo : "Aucune sélection"}
             </div>
 
             <div className="mt-4 h-[360px] overflow-auto rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -434,7 +490,7 @@ export default function MessagesPage() {
               ) : (
                 <div className="space-y-3">
                   {messages.map((m) => {
-                    const mine = m.from_user_id === me?.id;
+                    const mine = m.from_user_id === meId;
                     return (
                       <div key={m.id} className={cx("flex", mine ? "justify-end" : "justify-start")}>
                         <div
@@ -446,7 +502,7 @@ export default function MessagesPage() {
                           )}
                         >
                           <div className={cx("mb-1 text-[11px] font-black", mine ? "text-black/70" : "text-white/60")}>
-                            {mine ? (profile?.pseudo || "Toi") : (m.from_pseudo || activeOtherPseudo || "Membre")}
+                            {mine ? (meProfile?.pseudo || "Toi") : (m.from_pseudo || activeOtherPseudo || "Membre")}
                             <span className={cx("ml-2 font-normal", mine ? "text-black/60" : "text-white/45")}>
                               {fmtTime(m.created_at)}
                             </span>
@@ -467,6 +523,9 @@ export default function MessagesPage() {
                 onChange={(e) => setText(e.target.value)}
                 placeholder={activeOtherId ? "Écris un message..." : "Choisis une conversation"}
                 className="min-h-[66px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") send();
+                }}
               />
               <button
                 onClick={send}
@@ -475,6 +534,10 @@ export default function MessagesPage() {
                 <Send className="h-4 w-4" />
                 Envoyer
               </button>
+            </div>
+
+            <div className="mt-2 text-[11px] text-white/35">
+              Tip: Ctrl+Enter pour envoyer.
             </div>
           </section>
         </div>

@@ -46,7 +46,11 @@ function formatVip(vip_expires_at?: string | null) {
   return `VIP → ${d.toLocaleDateString("fr-CA")}`;
 }
 
-export default function Sidebar() {
+export default function Sidebar({
+  variant = "desktop",
+}: {
+  variant?: "desktop" | "drawer";
+}) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -72,10 +76,7 @@ export default function Sidebar() {
       { href: "/options", label: "Options", icon: Settings },
     ];
 
-    if (isAdmin) {
-      items.unshift({ href: "/admin", label: "Admin", icon: Shield });
-    }
-
+    if (isAdmin) items.unshift({ href: "/admin", label: "Admin", icon: Shield });
     return items;
   }, [isAdmin]);
 
@@ -119,7 +120,6 @@ export default function Sidebar() {
   useEffect(() => {
     loadProfile();
 
-    // Realtime profile changes (optionnel, mais nice)
     const channel = supabase
       .channel("sidebar-profile")
       .on(
@@ -140,14 +140,21 @@ export default function Sidebar() {
     router.push("/enter");
   }
 
+  const shell =
+    variant === "desktop"
+      ? "sticky top-0 h-screen w-[320px] shrink-0 border-r border-white/10 bg-black/40 backdrop-blur-2xl"
+      : "w-full border-b border-white/10 bg-black/40 backdrop-blur-2xl";
+
   return (
-    <aside className="sticky top-0 h-screen w-[320px] shrink-0 border-r border-white/10 bg-black/40 backdrop-blur-2xl">
-      <div className="flex h-full flex-col p-5">
+    <aside className={shell}>
+      <div className={cx("flex h-full flex-col", variant === "desktop" ? "p-5" : "p-4")}>
         {/* Brand */}
         <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs uppercase tracking-[0.28em] text-white/45">EtherCristal</div>
+              <div className="text-xs uppercase tracking-[0.28em] text-white/45">
+                EtherCristal
+              </div>
               <div className="mt-1 text-2xl font-black text-white">NCQ LIVE</div>
             </div>
 
@@ -171,7 +178,7 @@ export default function Sidebar() {
               </div>
             ) : profile ? (
               <div className="space-y-3">
-                <ProfileName profile={profile} size="md" showTitle />
+                <ProfileName profile={profile} size="md" showTitle showBadge />
 
                 <div className="flex flex-wrap gap-2">
                   <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
@@ -204,9 +211,7 @@ export default function Sidebar() {
                 </button>
               </div>
             ) : (
-              <div className="text-sm text-white/60">
-                Profil introuvable.
-              </div>
+              <div className="text-sm text-white/60">Profil introuvable.</div>
             )}
 
             {error ? (
@@ -218,7 +223,7 @@ export default function Sidebar() {
         </div>
 
         {/* Nav */}
-        <nav className="mt-5 flex-1 space-y-2">
+        <nav className={cx("mt-5 space-y-2", variant === "desktop" ? "flex-1" : "")}>
           {NAV.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + "/");
             const Icon = item.icon;
@@ -251,17 +256,19 @@ export default function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="mt-4 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-          <button
-            onClick={signOut}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-200 hover:bg-red-500/15"
-          >
-            <LogOut className="h-4 w-4" />
-            Déconnexion
-          </button>
+        <div className={cx("mt-4", variant === "desktop" ? "" : "pt-2")}>
+          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+            <button
+              onClick={signOut}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-200 hover:bg-red-500/15"
+            >
+              <LogOut className="h-4 w-4" />
+              Déconnexion
+            </button>
 
-          <div className="mt-3 text-center text-[11px] text-white/40">
-            EtherCristal • privé • premium
+            <div className="mt-3 text-center text-[11px] text-white/40">
+              EtherCristal • privé • premium
+            </div>
           </div>
         </div>
       </div>

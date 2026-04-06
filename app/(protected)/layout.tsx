@@ -14,12 +14,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // Close drawer on route change
+  // close drawer on route change
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
 
-  // Prevent body scroll when drawer open (mobile)
+  // prevent body scroll while drawer open
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -39,9 +39,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           <div className="absolute -right-24 bottom-16 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
         </div>
 
-        {/* Desktop layout */}
+        {/* Desktop */}
         <div className="hidden lg:flex">
-          <Sidebar />
+          <Sidebar variant="desktop" />
           <main className="min-h-screen flex-1">
             <div className="mx-auto w-full max-w-[1240px] p-6 xl:p-8">
               <div className="rounded-[36px] border border-white/10 bg-white/[0.03] p-4 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-6">
@@ -51,7 +51,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           </main>
         </div>
 
-        {/* Mobile layout */}
+        {/* Mobile */}
         <div className="lg:hidden">
           {/* Topbar */}
           <header className="sticky top-0 z-40 border-b border-white/10 bg-black/50 backdrop-blur-2xl">
@@ -69,37 +69,32 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                   <Sparkles className="h-4 w-4 text-white/80" />
                 </div>
                 <div className="leading-tight">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-                    EtherCristal
-                  </div>
+                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">EtherCristal</div>
                   <div className="text-sm font-black text-white">Espace privé</div>
                 </div>
               </div>
 
-              {/* spacer */}
+              {/* spacer for symmetry */}
               <div className="h-9 w-9" />
             </div>
           </header>
 
-          {/* Drawer overlay */}
+          {/* Drawer */}
           <div
             className={cx(
               "fixed inset-0 z-50 transition",
               open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
             )}
           >
-            <div
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-              onClick={() => setOpen(false)}
-            />
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setOpen(false)} />
 
-            {/* Drawer */}
             <div
               className={cx(
                 "absolute left-0 top-0 h-full w-[86%] max-w-[360px] border-r border-white/10 bg-black/60 backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.65)] transition-transform",
                 open ? "translate-x-0" : "-translate-x-full"
               )}
             >
+              {/* Drawer header */}
               <div className="flex items-center justify-between p-4">
                 <div>
                   <div className="text-xs uppercase tracking-[0.22em] text-white/45">Menu</div>
@@ -115,9 +110,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                 </button>
               </div>
 
-              <div className="h-[calc(100%-72px)] overflow-auto px-3 pb-6">
-                {/* Sidebar reused; ok if sticky, drawer wrapper handles scrolling */}
-                <Sidebar />
+              {/* Drawer body */}
+              <div className="h-[calc(100%-72px)] overflow-auto">
+                <Sidebar variant="drawer" />
               </div>
             </div>
           </div>

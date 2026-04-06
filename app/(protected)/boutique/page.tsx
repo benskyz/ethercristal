@@ -14,12 +14,14 @@ import {
   X,
   Check,
   Lock,
+  Search,
+  ArrowUpDown,
+  Power,
 } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import ProfileName, { DisplayProfile } from "@/components/ProfileName";
 import {
   getItemsByCategory,
-  getShopItemByKey,
   rarityBadgeClass,
   ShopItem,
 } from "@/lib/shop";
@@ -57,12 +59,20 @@ function isVipActive(vip_expires_at?: string | null) {
   return d > new Date();
 }
 
-type Tab = "effects" | "vip" | "master";
+type MainTab = "effects" | "vip" | "master";
+type EffectsTab = "name_fx" | "badge" | "title";
+type SortKey = "rarity" | "price";
+
+const rarityRank: Record<string, number> = { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4, MYTHIC: 5 };
 
 export default function BoutiquePage() {
   const router = useRouter();
 
-  const [tab, setTab] = useState<Tab>("effects");
+  const [mainTab, setMainTab] = useState<MainTab>("effects");
+  const [effectsTab, setEffectsTab] = useState<EffectsTab>("name_fx");
+  const [sortKey, setSortKey] = useState<SortKey>("rarity");
+  const [query, setQuery] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -81,16 +91,15 @@ export default function BoutiquePage() {
 
   const ownedKeys = useMemo(() => new Set(inventory.map((x) => x.item_key)), [inventory]);
 
-  const effects = useMemo(() => {
-    return [
-      ...getItemsByCategory("name_fx"),
-      ...getItemsByCategory("badge"),
-      ...getItemsByCategory("title"),
-    ];
-  }, []);
-
+  const nameFx = useMemo(() => getItemsByCategory("name_fx"), []);
+  const badges = useMemo(() => getItemsByCategory("badge"), []);
+  const titles = useMemo(() => getItemsByCategory("title"), []);
   const vipPlans = useMemo(() => getItemsByCategory("vip_plan"), []);
   const masterEther = useMemo(() => getItemsByCategory("master_ether"), []);
+
+  const activeNameFx = profile?.active_name_fx_key ?? null;
+  const activeBadge = profile?.active_badge_key ?? null;
+  const activeTitle = profile?.active_title_key ?? null;
 
   async function getAuthedUserOrRedirect() {
     const { data: { user }, error } = await supabase.auth.getUser();
@@ -112,9 +121,7 @@ export default function BoutiquePage() {
     const [pRes, invRes] = await Promise.all([
       supabase
         .from("profiles")
-        .select(
-          "id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
-        )
+        .select("id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style")
         .eq("id", user.id)
         .maybeSingle(),
       supabase
@@ -132,10 +139,7 @@ export default function BoutiquePage() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
 
   function openBuy(item: ShopItem) {
     setModalItem(item);
@@ -143,10 +147,19 @@ export default function BoutiquePage() {
     setError("");
     setInfo("");
   }
-
   function closeModal() {
     setModalOpen(false);
     setModalItem(null);
+  }
+
+  function isActive(item: ShopItem) {
+    if (!profile) return false;
+    if (item.category === "name_fx") return profile.active_name_fx_key === item.key;
+    if (item.category === "badge") return profile.active_badge_key === item.key;
+    if (item.category === "title") return profile.active_title_key === item.key;
+    if (item.category === "master_ether") return Boolean(isAdmin && profile.master_title === (item.titleText ?? item.name));
+    if (item.category === "vip_plan") return vipOk;
+    return false;
   }
 
   async function addToInventoryIfMissing(item: ShopItem) {
@@ -179,12 +192,10 @@ export default function BoutiquePage() {
         setError("Réservé au Maître Ether.");
         return;
       }
-
       if (ownedKeys.has(item.key)) {
         setInfo("Déjà possédé.");
         return;
       }
-
       if ((profile.credits ?? 0) < item.price) {
         setError("Crédits insuffisants.");
         return;
@@ -192,11 +203,7 @@ export default function BoutiquePage() {
 
       const nextCredits = (profile.credits ?? 0) - item.price;
 
-      const upd = await supabase
-        .from("profiles")
-        .update({ credits: nextCredits })
-        .eq("id", profile.id);
-
+      const upd = await supabase.from("profiles").update({ credits: nextCredits }).eq("id", profile.id);
       if (upd.error) throw new Error(upd.error.message);
 
       await addToInventoryIfMissing(item);
@@ -209,16 +216,6 @@ export default function BoutiquePage() {
       setBusyKey(null);
       closeModal();
     }
-  }
-
-  function isActive(item: ShopItem) {
-    if (!profile) return false;
-    if (item.category === "name_fx") return profile.active_name_fx_key === item.key;
-    if (item.category === "badge") return profile.active_badge_key === item.key;
-    if (item.category === "title") return profile.active_title_key === item.key;
-    if (item.category === "master_ether") return Boolean(isAdmin && profile.master_title === (item.titleText ?? item.name));
-    if (item.category === "vip_plan") return vipOk;
-    return false;
   }
 
   async function activate(item: ShopItem) {
@@ -234,7 +231,6 @@ export default function BoutiquePage() {
         return;
       }
 
-      // pour les items publics, faut posséder
       if (item.category !== "vip_plan" && item.category !== "master_ether") {
         if (!ownedKeys.has(item.key)) {
           setError("Tu dois acheter avant d’activer.");
@@ -243,7 +239,6 @@ export default function BoutiquePage() {
       }
 
       const patch: any = {};
-
       if (item.category === "name_fx") patch.active_name_fx_key = item.key;
       if (item.category === "badge") patch.active_badge_key = item.key;
       if (item.category === "title") patch.active_title_key = item.key;
@@ -295,6 +290,7 @@ export default function BoutiquePage() {
     }
   }
 
+  // VIP 7/30/90 (extends if already VIP)
   async function buyVip(plan: ShopItem) {
     if (!profile?.id) return;
 
@@ -303,8 +299,6 @@ export default function BoutiquePage() {
     setInfo("");
 
     try {
-      if (plan.category !== "vip_plan") return;
-
       if ((profile.credits ?? 0) < plan.price) {
         setError("Crédits insuffisants.");
         return;
@@ -323,16 +317,21 @@ export default function BoutiquePage() {
 
       const nextCredits = (profile.credits ?? 0) - plan.price;
 
-      const upd = await supabase
-        .from("profiles")
-        .update({ credits: nextCredits, vip_expires_at: next.toISOString() })
-        .eq("id", profile.id);
+      // VIP style auto (applied only if user has none active)
+      const vipBadgeKey = "badge_vip_gold";
+      const vipTitleKey = "title_private_host";
 
+      const patch: any = {
+        credits: nextCredits,
+        vip_expires_at: next.toISOString(),
+        active_badge_key: profile.active_badge_key || vipBadgeKey,
+        active_title_key: profile.active_title_key || vipTitleKey,
+      };
+
+      const upd = await supabase.from("profiles").update(patch).eq("id", profile.id);
       if (upd.error) throw new Error(upd.error.message);
 
-      setProfile((p) =>
-        p ? ({ ...p, credits: nextCredits, vip_expires_at: next.toISOString() } as any) : p
-      );
+      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
       setInfo(`VIP activé (${days} jours) 👑`);
     } catch (e: any) {
       setError(e?.message || "Erreur VIP.");
@@ -341,14 +340,30 @@ export default function BoutiquePage() {
     }
   }
 
-  const preview = useMemo(() => {
-    // show profile preview (uses ProfileName)
-    return profile;
-  }, [profile]);
+  const effectsList = useMemo(() => {
+    const base = effectsTab === "name_fx" ? nameFx : effectsTab === "badge" ? badges : titles;
+
+    const q = query.trim().toLowerCase();
+    const filtered = !q
+      ? base
+      : base.filter((it) =>
+          `${it.name} ${it.description} ${it.vibe} ${it.rarity}`.toLowerCase().includes(q)
+        );
+
+    const sorted = [...filtered].sort((a, b) => {
+      if (sortKey === "price") return a.price - b.price;
+      const ra = rarityRank[a.rarity] ?? 0;
+      const rb = rarityRank[b.rarity] ?? 0;
+      if (ra !== rb) return rb - ra;
+      return a.price - b.price;
+    });
+
+    return sorted;
+  }, [effectsTab, nameFx, badges, titles, query, sortKey]);
 
   return (
     <div className="space-y-6">
-      {/* Modal achat */}
+      {/* Buy Modal */}
       {modalOpen && modalItem ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeModal} />
@@ -372,20 +387,13 @@ export default function BoutiquePage() {
                 </div>
               </div>
 
-              <button
-                onClick={closeModal}
-                className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
-                title="Fermer"
-              >
+              <button onClick={closeModal} className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10" title="Fermer">
                 <X className="h-4 w-4 text-white/80" />
               </button>
             </div>
 
             <div className="mt-6 flex gap-3">
-              <button
-                onClick={closeModal}
-                className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/80 hover:bg-white/10"
-              >
+              <button onClick={closeModal} className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/80 hover:bg-white/10">
                 Annuler
               </button>
               <button
@@ -411,20 +419,16 @@ export default function BoutiquePage() {
               Boutique
             </div>
 
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
-              Effets & VIP
-            </h1>
-
+            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">Effets & VIP</h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
-              Achat → inventaire. Activation → pseudo stylé partout.
+              Acheter → inventaire. Activer → pseudo stylé partout.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-2">
               <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
                 {credits} crédits
               </span>
-              <span className={cx(
-                "rounded-full border px-3 py-1 text-xs font-black",
+              <span className={cx("rounded-full border px-3 py-1 text-xs font-black",
                 vipOk ? "border-amber-400/20 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/10 text-white/55"
               )}>
                 {vipOk ? "VIP actif" : "Non VIP"}
@@ -436,11 +440,59 @@ export default function BoutiquePage() {
               ) : null}
             </div>
 
-            {preview ? (
+            {profile ? (
               <div className="mt-6 rounded-[28px] border border-white/10 bg-black/30 p-5">
                 <div className="text-xs uppercase tracking-[0.22em] text-white/40">Aperçu</div>
                 <div className="mt-2">
-                  <ProfileName profile={preview} size="lg" showTitle />
+                  <ProfileName profile={profile} size="lg" showTitle />
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => deactivateCategory("name_fx")}
+                    disabled={!activeNameFx}
+                    className={cx(
+                      "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
+                      activeNameFx ? "border-white/10 bg-white/10 text-white/80 hover:bg-white/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
+                    )}
+                  >
+                    <Power className="h-4 w-4" /> Off Nom
+                  </button>
+
+                  <button
+                    onClick={() => deactivateCategory("badge")}
+                    disabled={!activeBadge}
+                    className={cx(
+                      "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
+                      activeBadge ? "border-white/10 bg-white/10 text-white/80 hover:bg-white/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
+                    )}
+                  >
+                    <Power className="h-4 w-4" /> Off Badge
+                  </button>
+
+                  <button
+                    onClick={() => deactivateCategory("title")}
+                    disabled={!activeTitle}
+                    className={cx(
+                      "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
+                      activeTitle ? "border-white/10 bg-white/10 text-white/80 hover:bg-white/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
+                    )}
+                  >
+                    <Power className="h-4 w-4" /> Off Titre
+                  </button>
+
+                  {isAdmin ? (
+                    <button
+                      onClick={() => deactivateCategory("master_ether")}
+                      disabled={!profile.master_title}
+                      className={cx(
+                        "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
+                        profile.master_title ? "border-violet-400/20 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
+                      )}
+                    >
+                      <Power className="h-4 w-4" /> Off Ether
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -452,8 +504,7 @@ export default function BoutiquePage() {
               onClick={() => router.push("/inventaire")}
               className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
             >
-              <Gem className="h-4 w-4" />
-              Inventaire
+              <Gem className="h-4 w-4" /> Inventaire
             </button>
 
             <button
@@ -461,8 +512,7 @@ export default function BoutiquePage() {
               onClick={() => router.push("/dashboard")}
               className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
             >
-              <Shield className="h-4 w-4" />
-              Dashboard
+              <Shield className="h-4 w-4" /> Dashboard
             </button>
 
             <button
@@ -470,31 +520,20 @@ export default function BoutiquePage() {
               onClick={loadAll}
               className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
             >
-              <RefreshCw className="h-4 w-4" />
-              Actualiser
+              <RefreshCw className="h-4 w-4" /> Actualiser
             </button>
           </div>
         </div>
 
         <div className="relative mt-6 flex flex-wrap gap-2">
-          <TabButton active={tab === "effects"} onClick={() => setTab("effects")} label="Effets" icon={<Sparkles className="h-4 w-4" />} />
-          <TabButton active={tab === "vip"} onClick={() => setTab("vip")} label="VIP" icon={<Crown className="h-4 w-4" />} />
-          <TabButton
-            active={tab === "master"}
-            onClick={() => setTab("master")}
-            label="Maître Ether"
-            icon={<Wand2 className="h-4 w-4" />}
-            locked={!isAdmin}
-          />
+          <MainTabButton active={mainTab === "effects"} onClick={() => setMainTab("effects")} label="Effets" icon={<Sparkles className="h-4 w-4" />} />
+          <MainTabButton active={mainTab === "vip"} onClick={() => setMainTab("vip")} label="VIP" icon={<Crown className="h-4 w-4" />} />
+          <MainTabButton active={mainTab === "master"} onClick={() => setMainTab("master")} label="Maître Ether" icon={<Wand2 className="h-4 w-4" />} locked={!isAdmin} />
         </div>
       </section>
 
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
-      ) : null}
-      {info ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{info}</div>
-      ) : null}
+      {error ? <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div> : null}
+      {info ? <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{info}</div> : null}
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -502,68 +541,125 @@ export default function BoutiquePage() {
             <div key={i} className="h-[260px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
           ))}
         </div>
-      ) : tab === "effects" ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {effects.map((item) => {
-            const owned = ownedKeys.has(item.key);
-            const active = isActive(item);
+      ) : mainTab === "effects" ? (
+        <>
+          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap gap-2">
+                <MiniTab active={effectsTab === "name_fx"} onClick={() => setEffectsTab("name_fx")} label="Nom" icon={<Sparkles className="h-4 w-4" />} />
+                <MiniTab active={effectsTab === "badge"} onClick={() => setEffectsTab("badge")} label="Badge" icon={<Gem className="h-4 w-4" />} />
+                <MiniTab active={effectsTab === "title"} onClick={() => setEffectsTab("title")} label="Titre" icon={<Zap className="h-4 w-4" />} />
+              </div>
 
-            return (
-              <ShopCard
-                key={item.key}
-                item={item}
-                owned={owned}
-                active={active}
-                busy={busyKey === item.key}
-                onBuy={() => openBuy(item)}
-                onActivate={() => activate(item)}
-                onDeactivate={() => deactivateCategory(item.category as any)}
+              <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:justify-end">
+                <div className="relative w-full lg:max-w-sm">
+                  <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Chercher..."
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
+                  />
+                </div>
+
+                <button
+                  onClick={() => setSortKey((s) => (s === "rarity" ? "price" : "rarity"))}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
+                >
+                  <ArrowUpDown className="h-4 w-4" />
+                  Tri: {sortKey === "rarity" ? "Rareté" : "Prix"}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {effectsList.map((item) => {
+              const owned = ownedKeys.has(item.key);
+              const active = isActive(item);
+              return (
+                <ShopCard
+                  key={item.key}
+                  item={item}
+                  owned={owned}
+                  active={active}
+                  busy={busyKey === item.key}
+                  onBuy={() => openBuy(item)}
+                  onActivate={() => activate(item)}
+                  onDeactivate={() => deactivateCategory(item.category as any)}
+                />
+              );
+            })}
+          </div>
+        </>
+      ) : mainTab === "vip" ? (
+        <>
+          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+            <div className="flex items-center gap-2 text-white font-black text-xl">
+              <Crown className="h-5 w-5 text-amber-200" /> VIP / Abonnements
+            </div>
+            <p className="mt-2 text-sm text-white/60">
+              VIP = accès salons VIP + statut. L’achat prolonge la durée.
+            </p>
+            <ul className="mt-4 space-y-2 text-sm text-white/65">
+              <li>• Accès aux salons VIP</li>
+              <li>• Bonus style VIP auto (badge + titre) si rien d’actif</li>
+              <li>• Expiration cumulative</li>
+            </ul>
+          </section>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {vipPlans.slice().sort((a, b) => a.price - b.price).map((plan) => (
+              <VipCard
+                key={plan.key}
+                plan={plan}
+                credits={credits}
+                busy={busyKey === plan.key}
+                onBuy={() => buyVip(plan)}
               />
-            );
-          })}
-        </div>
-      ) : tab === "vip" ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {vipPlans.map((plan) => (
-            <VipCard
-              key={plan.key}
-              plan={plan}
-              credits={credits}
-              busy={busyKey === plan.key}
-              onBuy={() => buyVip(plan)}
-            />
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       ) : !isAdmin ? (
         <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6">
           <div className="flex items-center gap-2 font-black text-white/85">
-            <Lock className="h-4 w-4" />
-            Réservé
+            <Lock className="h-4 w-4" /> Réservé
           </div>
           <p className="mt-2 text-sm text-white/60">Les effets Ether sont réservés au Maître Ether.</p>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {masterEther.map((item) => (
-            <ShopCard
-              key={item.key}
-              item={item}
-              owned={true}
-              active={isActive(item)}
-              busy={busyKey === item.key}
-              onBuy={undefined}
-              onActivate={() => activate(item)}
-              onDeactivate={() => deactivateCategory("master_ether")}
-              forceMaster
-            />
-          ))}
-        </div>
+        <>
+          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+            <div className="flex items-center gap-2 text-white font-black text-xl">
+              <Wand2 className="h-5 w-5 text-violet-200" /> Maître Ether
+            </div>
+            <p className="mt-2 text-sm text-white/60">
+              Titres Ether appliqués directement sur ton profil.
+            </p>
+          </section>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {masterEther.map((item) => (
+              <ShopCard
+                key={item.key}
+                item={item}
+                owned={true}
+                active={isActive(item)}
+                busy={busyKey === item.key}
+                onBuy={undefined}
+                onActivate={() => activate(item)}
+                onDeactivate={() => deactivateCategory("master_ether")}
+                forceMaster
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-function TabButton({
+function MainTabButton({
   active,
   onClick,
   label,
@@ -586,9 +682,32 @@ function TabButton({
         locked && "opacity-60 cursor-not-allowed"
       )}
     >
-      {icon}
-      {label}
-      {locked ? " 🔒" : ""}
+      {icon} {label} {locked ? " 🔒" : ""}
+    </button>
+  );
+}
+
+function MiniTab({
+  active,
+  onClick,
+  label,
+  icon,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        "inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-black transition",
+        active ? "border-white/10 bg-white/15 text-white" : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+      )}
+    >
+      {icon} {label}
     </button>
   );
 }
@@ -662,13 +781,9 @@ function ShopCard({
       <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
         <div className="text-xs uppercase tracking-[0.22em] text-white/40">Preview</div>
         {item.category === "name_fx" ? (
-          <div className={cx("mt-2 text-2xl font-black", item.previewClass || "text-white")}>
-            Pseudo
-          </div>
+          <div className={cx("mt-2 text-2xl font-black", item.previewClass || "text-white")}>Pseudo</div>
         ) : item.category === "badge" ? (
-          <div className="mt-2">
-            <span className={item.badgeClass || "text-white/70"}>{item.name}</span>
-          </div>
+          <div className="mt-2"><span className={item.badgeClass || "text-white/70"}>{item.name}</span></div>
         ) : (
           <div className={cx("mt-2 text-xs font-black tracking-[0.22em] uppercase", item.previewClass || "text-white/70")}>
             {item.titleText || item.name}
@@ -687,8 +802,7 @@ function ShopCard({
               disabled={busy}
               className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2.5 text-sm font-black text-black hover:opacity-95 disabled:opacity-70"
             >
-              <ShoppingBag className="h-4 w-4" />
-              Acheter
+              <ShoppingBag className="h-4 w-4" /> Acheter
             </button>
           ) : active ? (
             <button
@@ -697,8 +811,7 @@ function ShopCard({
               disabled={busy}
               className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/15 disabled:opacity-60"
             >
-              <X className="h-4 w-4" />
-              Off
+              <X className="h-4 w-4" /> Off
             </button>
           ) : (
             <button
@@ -712,8 +825,7 @@ function ShopCard({
                   : "border border-white/10 bg-white/5 text-white/45 cursor-not-allowed"
               )}
             >
-              <Wand2 className="h-4 w-4" />
-              Activer
+              <Wand2 className="h-4 w-4" /> Activer
             </button>
           )}
         </div>
@@ -722,17 +834,7 @@ function ShopCard({
   );
 }
 
-function VipCard({
-  plan,
-  credits,
-  busy,
-  onBuy,
-}: {
-  plan: ShopItem;
-  credits: number;
-  busy: boolean;
-  onBuy: () => void;
-}) {
+function VipCard({ plan, credits, busy, onBuy }: { plan: ShopItem; credits: number; busy: boolean; onBuy: () => void }) {
   const days = Number(plan.meta?.days ?? 0);
   const affordable = credits >= plan.price;
 

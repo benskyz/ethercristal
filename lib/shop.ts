@@ -6,28 +6,21 @@ export type ShopItem = {
   category: ShopCategory;
   name: string;
   description: string;
-  price: number; // crédits (0 si master-only)
+  price: number; // credits (0 for master ether)
   rarity: Rarity;
   vibe: string;
 
-  // name effects
-  previewClass?: string;
+  previewClass?: string; // name_fx and ether preview
+  badgeClass?: string; // badge preview
+  titleText?: string; // title / ether title text
 
-  // badges
-  badgeClass?: string;
-
-  // titles / master
-  titleText?: string;
-
-  // master-only items (toi)
   requiresMaster?: boolean;
-
   meta?: Record<string, any>;
 };
 
 export const SHOP: ShopItem[] = [
   // ==========================
-  // NAME EFFECTS (PUBLIC)
+  // NAME EFFECTS (PUBLIC) — BASE
   // ==========================
   {
     key: "name_crystal_prism",
@@ -130,7 +123,120 @@ export const SHOP: ShopItem[] = [
   },
 
   // ==========================
-  // BADGES (PUBLIC)
+  // NAME EFFECTS (PUBLIC) — MORE
+  // ==========================
+  {
+    key: "name_diamond_dust",
+    category: "name_fx",
+    name: "DIAMOND DUST",
+    description: "Cristal ultra fin, micro halo premium.",
+    price: 340,
+    rarity: "EPIC",
+    vibe: "Cristal",
+    previewClass:
+      "bg-gradient-to-r from-white via-cyan-100 to-white bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(180,240,255,0.18)]",
+  },
+  {
+    key: "name_crystal_edge",
+    category: "name_fx",
+    name: "CRYSTAL EDGE",
+    description: "Tranchant froid, contour clean.",
+    price: 300,
+    rarity: "RARE",
+    vibe: "Cristal",
+    previewClass:
+      "bg-gradient-to-r from-slate-100 via-white to-cyan-100 bg-clip-text text-transparent [text-shadow:0_0_26px_rgba(120,220,255,0.16)]",
+  },
+  {
+    key: "name_ice_vein",
+    category: "name_fx",
+    name: "ICE VEIN",
+    description: "Glace veineuse, discret mais chic.",
+    price: 360,
+    rarity: "EPIC",
+    vibe: "Glace",
+    previewClass:
+      "bg-gradient-to-r from-sky-200 via-white to-cyan-200 bg-clip-text text-transparent drop-shadow-[0_0_22px_rgba(150,220,255,0.20)]",
+  },
+  {
+    key: "name_prism_shard",
+    category: "name_fx",
+    name: "PRISM SHARD",
+    description: "Prisme cassé, reflets contrôlés.",
+    price: 520,
+    rarity: "LEGENDARY",
+    vibe: "Cristal",
+    previewClass:
+      "bg-gradient-to-r from-cyan-200 via-fuchsia-200 to-white bg-clip-text text-transparent drop-shadow-[0_0_26px_rgba(180,120,255,0.16)]",
+  },
+  {
+    key: "name_abyss_ink",
+    category: "name_fx",
+    name: "ABYSS INK",
+    description: "Noir abyssal + contour argent froid.",
+    price: 420,
+    rarity: "EPIC",
+    vibe: "Void",
+    previewClass:
+      "bg-gradient-to-r from-zinc-200 via-white to-zinc-300 bg-clip-text text-transparent [text-shadow:0_0_30px_rgba(0,0,0,0.75)]",
+  },
+  {
+    key: "name_null_halo",
+    category: "name_fx",
+    name: "NULL HALO",
+    description: "Halo minimal, aura froide.",
+    price: 280,
+    rarity: "RARE",
+    vibe: "Void",
+    previewClass: "text-white/90 drop-shadow-[0_0_18px_rgba(80,220,255,0.20)]",
+  },
+  {
+    key: "name_obsidian_veil",
+    category: "name_fx",
+    name: "OBSIDIAN VEIL",
+    description: "Voile sombre, luxe discret.",
+    price: 500,
+    rarity: "LEGENDARY",
+    vibe: "Void",
+    previewClass:
+      "bg-gradient-to-r from-zinc-100 via-white to-zinc-200 bg-clip-text text-transparent [text-shadow:0_0_34px_rgba(0,0,0,0.85)]",
+  },
+  {
+    key: "name_laser_rose",
+    category: "name_fx",
+    name: "LASER ROSE",
+    description: "Neon rose minimal, très lisible.",
+    price: 390,
+    rarity: "EPIC",
+    vibe: "Neon",
+    previewClass:
+      "text-white drop-shadow-[0_0_18px_rgba(255,70,160,0.38)] [text-shadow:0_0_26px_rgba(255,70,160,0.18)]",
+  },
+  {
+    key: "name_neon_noir",
+    category: "name_fx",
+    name: "NEON NOIR",
+    description: "Neon sombre contrôlé (pas flashy).",
+    price: 430,
+    rarity: "EPIC",
+    vibe: "Neon",
+    previewClass:
+      "bg-gradient-to-r from-white via-zinc-200 to-white bg-clip-text text-transparent drop-shadow-[0_0_18px_rgba(120,90,255,0.18)]",
+  },
+  {
+    key: "name_chromatic_split",
+    category: "name_fx",
+    name: "CHROMATIC SPLIT",
+    description: "Split RGB soft, glitch premium.",
+    price: 780,
+    rarity: "MYTHIC",
+    vibe: "Glitch",
+    previewClass:
+      "text-white [text-shadow:-1px_0_0_rgba(0,220,255,0.35),1px_0_0_rgba(255,60,160,0.35),0_0_28px_rgba(120,90,255,0.22)]",
+  },
+
+  // ==========================
+  // BADGES
   // ==========================
   {
     key: "badge_diamond",
@@ -168,9 +274,81 @@ export const SHOP: ShopItem[] = [
       "inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-2 py-1 text-[11px] font-black text-white/70",
     meta: { icon: "⬛" },
   },
+  {
+    key: "badge_royal",
+    category: "badge",
+    name: "Badge Royal",
+    description: "Badge 👑 royal premium.",
+    price: 360,
+    rarity: "EPIC",
+    vibe: "Royal",
+    badgeClass:
+      "inline-flex items-center gap-1 rounded-full border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[11px] font-black text-amber-200",
+    meta: { icon: "👑" },
+  },
+  {
+    key: "badge_abyss_sigil",
+    category: "badge",
+    name: "Badge Abyss",
+    description: "Sigil abyssal discret.",
+    price: 340,
+    rarity: "EPIC",
+    vibe: "Void",
+    badgeClass:
+      "inline-flex items-center gap-1 rounded-full border border-zinc-200/15 bg-black/30 px-2 py-1 text-[11px] font-black text-white/75",
+    meta: { icon: "🜂" },
+  },
+  {
+    key: "badge_pulse",
+    category: "badge",
+    name: "Badge Pulse",
+    description: "Badge ⚡ énergie propre.",
+    price: 280,
+    rarity: "RARE",
+    vibe: "Neon",
+    badgeClass:
+      "inline-flex items-center gap-1 rounded-full border border-fuchsia-400/20 bg-fuchsia-500/10 px-2 py-1 text-[11px] font-black text-fuchsia-200",
+    meta: { icon: "⚡" },
+  },
+  {
+    key: "badge_velvet",
+    category: "badge",
+    name: "Badge Velvet",
+    description: "Badge 🥀 velvet.",
+    price: 280,
+    rarity: "RARE",
+    vibe: "Velvet",
+    badgeClass:
+      "inline-flex items-center gap-1 rounded-full border border-rose-400/20 bg-rose-500/10 px-2 py-1 text-[11px] font-black text-rose-200",
+    meta: { icon: "🥀" },
+  },
+  {
+    key: "badge_nocturne",
+    category: "badge",
+    name: "Badge Nocturne",
+    description: "Badge 🌙 night vibe.",
+    price: 240,
+    rarity: "RARE",
+    vibe: "Noir",
+    badgeClass:
+      "inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-2 py-1 text-[11px] font-black text-white/70",
+    meta: { icon: "🌙" },
+  },
+  {
+    key: "badge_verified",
+    category: "badge",
+    name: "Badge Verified",
+    description: "Badge ✅ style vérifié.",
+    price: 520,
+    rarity: "LEGENDARY",
+    vibe: "Premium",
+    badgeClass:
+      "inline-flex items-center gap-1 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2 py-1 text-[11px] font-black text-emerald-200",
+    meta: { icon: "✅" },
+  },
 
   // ==========================
-  // TITLES (PUBLIC)
+  // TITLES
   // ==========================
   {
     key: "title_nocturne",
@@ -202,15 +380,65 @@ export const SHOP: ShopItem[] = [
     vibe: "Dark",
     titleText: "SINISTER",
   },
+  {
+    key: "title_obsidian",
+    category: "title",
+    name: "Titre: OBSIDIAN",
+    description: "Titre sombre, luxe, propre.",
+    price: 360,
+    rarity: "EPIC",
+    vibe: "Void",
+    titleText: "OBSIDIAN",
+  },
+  {
+    key: "title_aurora",
+    category: "title",
+    name: "Titre: AURORA",
+    description: "Titre cosmique doux.",
+    price: 360,
+    rarity: "EPIC",
+    vibe: "Aurora",
+    titleText: "AURORA",
+  },
+  {
+    key: "title_private_host",
+    category: "title",
+    name: "Titre: PRIVATE HOST",
+    description: "Titre premium discret.",
+    price: 520,
+    rarity: "LEGENDARY",
+    vibe: "Premium",
+    titleText: "PRIVATE HOST",
+  },
+  {
+    key: "title_night_shift",
+    category: "title",
+    name: "Titre: NIGHT SHIFT",
+    description: "Titre nocturne moderne.",
+    price: 520,
+    rarity: "LEGENDARY",
+    vibe: "Noir",
+    titleText: "NIGHT SHIFT",
+  },
 
   // ==========================
-  // VIP PLANS
+  // VIP PLANS — 7/30/90
   // ==========================
+  {
+    key: "vip_7d",
+    category: "vip_plan",
+    name: "VIP 7 jours",
+    description: "Test VIP : accès salons VIP + statut.",
+    price: 420,
+    rarity: "EPIC",
+    vibe: "VIP",
+    meta: { days: 7, tier: "VIP" },
+  },
   {
     key: "vip_30d",
     category: "vip_plan",
     name: "VIP 30 jours",
-    description: "Accès VIP + salons VIP + badge VIP.",
+    description: "Accès VIP + salons VIP.",
     price: 1200,
     rarity: "LEGENDARY",
     vibe: "VIP",
@@ -228,7 +456,7 @@ export const SHOP: ShopItem[] = [
   },
 
   // ==========================
-  // MASTER ETHER (TOI SEULEMENT)
+  // MASTER ETHER (ADMIN ONLY)
   // ==========================
   {
     key: "ether_master_title_dominus",
@@ -258,15 +486,13 @@ export const SHOP: ShopItem[] = [
   },
 ];
 
-// ---------- HELPERS ----------
+// Helpers
 export function getShopItemByKey(key: string) {
   return SHOP.find((x) => x.key === key) || null;
 }
-
 export function getItemsByCategory(cat: ShopCategory) {
   return SHOP.filter((x) => x.category === cat);
 }
-
 export function rarityBadgeClass(r: Rarity) {
   const map: Record<Rarity, string> = {
     COMMON: "border-white/10 bg-white/10 text-white/70",
@@ -278,12 +504,7 @@ export function rarityBadgeClass(r: Rarity) {
   return map[r];
 }
 
-export function isNameEffectKey(key: string) {
-  const item = getShopItemByKey(key);
-  return item?.category === "name_fx";
-}
-
-// ---------- COMPAT (Inventaire expects these exports) ----------
+// Compat exports expected by inventaire page
 export function getRarityLabel(r: string) {
   const v = String(r || "").toUpperCase();
   if (v === "COMMON") return "Commun";
@@ -293,7 +514,6 @@ export function getRarityLabel(r: string) {
   if (v === "MYTHIC") return "Mythique";
   return v || "—";
 }
-
 export function getRarityClasses(r: string) {
   const v = String(r || "").toUpperCase();
   if (v === "COMMON") return "border-white/10 bg-white/10 text-white/70";
@@ -303,7 +523,6 @@ export function getRarityClasses(r: string) {
   if (v === "MYTHIC") return "border-rose-400/25 bg-rose-500/10 text-rose-200";
   return "border-white/10 bg-white/10 text-white/70";
 }
-
 export function getCategoryLabel(cat: string) {
   const c = String(cat || "").toLowerCase();
   if (c === "name_fx") return "Effet de nom";

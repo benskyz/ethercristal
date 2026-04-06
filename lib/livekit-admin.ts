@@ -1,34 +1,55 @@
-// lib/livekit-admin.ts
 import { RoomServiceClient } from "livekit-server-sdk";
 
-const apiKey = process.env.LIVEKIT_API_KEY!;
-const apiSecret = process.env.LIVEKIT_API_SECRET!;
-const livekitHost =
-  process.env.LIVEKIT_URL ||
-  process.env.NEXT_PUBLIC_LIVEKIT_URL!;
+function getLivekitHost() {
+  const host =
+    process.env.LIVEKIT_URL ||
+    process.env.NEXT_PUBLIC_LIVEKIT_URL ||
+    "";
 
-if (!apiKey || !apiSecret || !livekitHost) {
-  console.warn("LiveKit env variables missing.");
+  if (!host) {
+    throw new Error("LIVEKIT_URL / NEXT_PUBLIC_LIVEKIT_URL manquant");
+  }
+
+  return host;
 }
 
-export const roomService = new RoomServiceClient(
-  livekitHost,
-  apiKey,
-  apiSecret
-);
+function getLivekitApiKey() {
+  const key = process.env.LIVEKIT_API_KEY || "";
+  if (!key) {
+    throw new Error("LIVEKIT_API_KEY manquant");
+  }
+  return key;
+}
+
+function getLivekitApiSecret() {
+  const secret = process.env.LIVEKIT_API_SECRET || "";
+  if (!secret) {
+    throw new Error("LIVEKIT_API_SECRET manquant");
+  }
+  return secret;
+}
+
+export function getRoomService() {
+  return new RoomServiceClient(
+    getLivekitHost(),
+    getLivekitApiKey(),
+    getLivekitApiSecret()
+  );
+}
 
 export async function ensureRoomExists(roomName: string) {
-  try {
-    const rooms = await roomService.listRooms([roomName]);
-    if (!rooms || rooms.length === 0) {
-      await roomService.createRoom({
-        name: roomName,
-        emptyTimeout: 60 * 10, // auto delete after 10 min empty
-        maxParticipants: 2,
-      });
-    }
-  } catch (err) {
-    console.error("ensureRoomExists error:", err);
-    throw err;
+  if (!roomName) {
+    throw new Error("roomName manquant");
+  }
+
+  const roomService = getRoomService();
+  const rooms = await roomService.listRooms([roomName]);
+
+  if (!rooms || rooms.length === 0) {
+    await roomService.createRoom({
+      name: roomName,
+      emptyTimeout: 60 * 10,
+      maxParticipants: 2,
+    });
   }
 }

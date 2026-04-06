@@ -3,8 +3,8 @@ import { ensureRoomExists } from "@/lib/livekit-admin";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const room = body?.room;
+    const body = await req.json().catch(() => ({}));
+    const room = String(body?.room || "").trim();
 
     if (!room) {
       return NextResponse.json({ error: "room missing" }, { status: 400 });
@@ -14,6 +14,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    console.error("create-room error:", e);
+    return NextResponse.json(
+      { error: e?.message || "create-room failed" },
+      { status: 500 }
+    );
   }
 }

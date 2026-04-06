@@ -8,7 +8,6 @@ export function createSafeChannel(
 ) {
   if (!name) throw new Error("Channel name missing");
 
-  // reuse existing channel if exists
   if (channelCache.has(name)) {
     return {
       channel: channelCache.get(name)!,
@@ -29,4 +28,15 @@ export function createSafeChannel(
   }
 
   return { channel, cleanup };
+}
+
+export function safeSubscribe(
+  supabase: SupabaseClient,
+  name: string,
+  build: (channel: RealtimeChannel) => RealtimeChannel
+) {
+  const { channel, cleanup } = createSafeChannel(supabase, name);
+  const built = build(channel);
+  built.subscribe();
+  return cleanup;
 }

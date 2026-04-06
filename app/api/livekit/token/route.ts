@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AccessToken, VideoGrant } from "livekit-server-sdk";
+import { AccessToken } from "livekit-server-sdk";
 import { ensureRoomExists } from "@/lib/livekit-admin";
 
 function getApiKey() {
@@ -42,14 +42,12 @@ export async function POST(req: NextRequest) {
       identity,
     });
 
-    const grant = new VideoGrant({
-      room,
+    at.addGrant({
       roomJoin: true,
+      room,
       canPublish: true,
       canSubscribe: true,
     });
-
-    at.addGrant(grant);
 
     const token = await at.toJwt();
 

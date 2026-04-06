@@ -3,47 +3,35 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import ProfileName, { DisplayProfile } from "@/components/ProfileName";
+import { Search, Send, RefreshCw, MessageCircle, Users } from "lucide-react";
 
 const supabase = requireSupabaseBrowserClient();
 
-type ProfileRow = {
+type ProfileRow = DisplayProfile & {
   id: string;
   pseudo?: string | null;
-  is_vip?: boolean | null;
-  is_admin?: boolean | null;
 };
 
 type MessageRow = {
   id: string;
-  sender_id: string;
-  recipient_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  from_pseudo?: string | null;
+  to_pseudo?: string | null;
   content: string;
-  created_at: string;
+  created_at?: string | null;
 };
 
-type ConversationPreview = {
-  userId: string;
-  pseudo: string;
-  lastMessage: string;
-  lastDate: string;
-  isVip: boolean;
-  isAdmin: boolean;
-};
-
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
+function cx(...c: Array<string | false | null | undefined>) {
+  return c.filter(Boolean).join(" ");
 }
 
-function formatTime(value?: string) {
+function fmtTime(value?: string | null) {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString("fr-CA", {
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "short",
-    day: "numeric",
-  });
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
 }
 
 export default function MessagesPage() {
@@ -51,477 +39,446 @@ export default function MessagesPage() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [currentUserId, setCurrentUserId] = useState("");
-  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [me, setMe] = useState<{ id: string } | null>(null);
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
+
+  const [threads, setThreads] = useState<
+    Array<{ otherId: string; otherPseudo: string; lastAt: string; lastText: string; lastFromMe: boolean }>
+  >([]);
+
+  const [activeOtherId, setActiveOtherId] = useState<string>("");
+  const [activeOtherPseudo, setActiveOtherPseudo] = useState<string>("");
+
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [draft, setDraft] = useState("");
-  const [search, setSearch] = useState("");
-  const [sending, setSending] = useState(false);
+  const [query, setQuery] = useState("");
+  const [text, setText] = useState("");
+
   const [error, setError] = useState("");
-  const [messageInfo, setMessageInfo] = useState("");
+  const [info, setInfo] = useState("");
 
-  async function loadInitialData() {
-    setLoading(true);
+  // ====== LOAD ======
+  async function loadAll(silent = false) {
+    if (!silent) setLoading(true);
     setError("");
-    setMessageInfo("");
+    setInfo("");
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      router.push("/enter");
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    if (authErr || !auth?.user) {
+      router.replace("/enter");
       return;
     }
 
-    setCurrentUserId(user.id);
+    const myId = auth.user.id;
+    setMe({ id: myId });
 
-    const [profilesRes, messagesRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id, pseudo, is_vip, is_admin")
-        .neq("id", user.id)
-        .order("pseudo", { ascending: true }),
+    const [pRes, msgRes] = await Promise.all([
+      supabase.from("profiles").select("id, pseudo, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style").eq("id", myId).maybeSingle(),
       supabase
         .from("messages")
-        .select("id, sender_id, recipient_id, content, created_at")
-        .or(`sender_id.eq.${user.id},recipient_id.eq.${user.id}`)
+        .select("id, from_user_id, to_user_id, from_pseudo, to_pseudo, content, created_at")
+        .or(`from_user_id.eq.${myId},to_user_id.eq.${myId}`)
         .order("created_at", { ascending: true }),
     ]);
 
-    if (profilesRes.error) {
-      setError(profilesRes.error.message);
-    } else {
-      setProfiles((profilesRes.data ?? []) as ProfileRow[]);
+    if (pRes.error) setError(pRes.error.message);
+    else setProfile((pRes.data as any) ?? null);
+
+    if (msgRes.error) {
+      setError((prev) => prev || msgRes.error!.message);
+      setThreads([]);
+      setMessages([]);
+      if (!silent) setLoading(false);
+      return;
     }
 
-    if (messagesRes.error) {
-      setError(messagesRes.error.message);
-    } else {
-      setMessages((messagesRes.data ?? []) as MessageRow[]);
+    const all = (msgRes.data ?? []) as MessageRow[];
+
+    // Build threads (1:1) from messages
+    const map = new Map<
+      string,
+      { otherId: string; otherPseudo: string; lastAt: string; lastText: string; lastFromMe: boolean }
+    >();
+
+    for (const m of all) {
+      const otherId = m.from_user_id === myId ? m.to_user_id : m.from_user_id;
+      const otherPseudo =
+        (m.from_user_id === myId ? m.to_pseudo : m.from_pseudo) ||
+        "Membre";
+
+      const lastAt = m.created_at ?? "";
+      const lastText = m.content ?? "";
+      const lastFromMe = m.from_user_id === myId;
+
+      const existing = map.get(otherId);
+      if (!existing) {
+        map.set(otherId, { otherId, otherPseudo, lastAt, lastText, lastFromMe });
+      } else {
+        // compare by created_at string (ISO works lexicographically)
+        if ((existing.lastAt || "") <= (lastAt || "")) {
+          map.set(otherId, { otherId, otherPseudo, lastAt, lastText, lastFromMe });
+        }
+      }
     }
 
-    setLoading(false);
+    const list = Array.from(map.values()).sort((a, b) => (b.lastAt || "").localeCompare(a.lastAt || ""));
+    setThreads(list);
+
+    // pick default thread if none selected
+    if (!activeOtherId && list.length > 0) {
+      setActiveOtherId(list[0].otherId);
+      setActiveOtherPseudo(list[0].otherPseudo);
+    }
+
+    // load active messages
+    const activeId = activeOtherId || (list[0]?.otherId ?? "");
+    if (activeId) {
+      const convo = all.filter(
+        (m) =>
+          (m.from_user_id === myId && m.to_user_id === activeId) ||
+          (m.from_user_id === activeId && m.to_user_id === myId)
+      );
+      setMessages(convo);
+    } else {
+      setMessages([]);
+    }
+
+    if (!silent) setLoading(false);
   }
 
   useEffect(() => {
-    loadInitialData();
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!currentUserId) return;
-
-    const channel = supabase
-      .channel(`messages-user-${currentUserId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-        },
-        (payload) => {
-          const row = payload.new as MessageRow;
-
-          if (
-            row.sender_id === currentUserId ||
-            row.recipient_id === currentUserId
-          ) {
-            setMessages((prev) => {
-              const exists = prev.some((msg) => msg.id === row.id);
-              if (exists) return prev;
-              return [...prev, row];
-            });
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [currentUserId]);
-
-  const filteredProfiles = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return profiles;
-
-    return profiles.filter((profile) =>
-      [profile.pseudo ?? "", profile.id].join(" ").toLowerCase().includes(q)
-    );
-  }, [profiles, search]);
-
-  const conversations = useMemo(() => {
-    if (!currentUserId) return [];
-
-    const map = new Map<string, ConversationPreview>();
-
-    for (const msg of messages) {
-      const otherUserId =
-        msg.sender_id === currentUserId ? msg.recipient_id : msg.sender_id;
-
-      const profile = profiles.find((p) => p.id === otherUserId);
-      const pseudo = profile?.pseudo || "Membre";
-
-      const existing = map.get(otherUserId);
-      if (!existing || new Date(msg.created_at) > new Date(existing.lastDate)) {
-        map.set(otherUserId, {
-          userId: otherUserId,
-          pseudo,
-          lastMessage: msg.content,
-          lastDate: msg.created_at,
-          isVip: Boolean(profile?.is_vip),
-          isAdmin: Boolean(profile?.is_admin),
-        });
-      }
-    }
-
-    return Array.from(map.values()).sort(
-      (a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime()
-    );
-  }, [messages, profiles, currentUserId]);
-
-  const selectedProfile = useMemo(
-    () => profiles.find((p) => p.id === selectedUserId) ?? null,
-    [profiles, selectedUserId]
-  );
-
-  const threadMessages = useMemo(() => {
-    if (!selectedUserId || !currentUserId) return [];
-
-    return messages.filter(
-      (msg) =>
-        (msg.sender_id === currentUserId && msg.recipient_id === selectedUserId) ||
-        (msg.sender_id === selectedUserId && msg.recipient_id === currentUserId)
-    );
-  }, [messages, selectedUserId, currentUserId]);
-
+  // scroll chat on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [threadMessages.length, selectedUserId]);
+  }, [messages.length]);
 
-  async function handleSendMessage() {
+  async function refresh() {
+    setRefreshing(true);
+    await loadAll(true);
+    setRefreshing(false);
+  }
+
+  // ====== REALTIME (safe) ======
+  useEffect(() => {
+    if (!me?.id) return;
+
+    let alive = true;
+    let channel: any = null;
+
+    (async () => {
+      const myId = me.id;
+      const channelName = `messages-user-${myId}-${Date.now()}`;
+
+      channel = supabase
+        .channel(channelName)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "messages" },
+          (payload) => {
+            if (!alive) return;
+            const row = payload.new as MessageRow;
+
+            // Keep only messages that involve me
+            if (row.from_user_id !== myId && row.to_user_id !== myId) return;
+
+            setMessages((prev) => {
+              // only append if belongs to current convo
+              if (!activeOtherId) return prev;
+              const belongs =
+                (row.from_user_id === myId && row.to_user_id === activeOtherId) ||
+                (row.from_user_id === activeOtherId && row.to_user_id === myId);
+              if (!belongs) return prev;
+
+              const exists = prev.some((m) => m.id === row.id);
+              return exists ? prev : [...prev, row];
+            });
+
+            // Update threads list quickly
+            setThreads((prev) => {
+              const otherId = row.from_user_id === myId ? row.to_user_id : row.from_user_id;
+              const otherPseudo =
+                (row.from_user_id === myId ? row.to_pseudo : row.from_pseudo) || "Membre";
+
+              const next = [...prev];
+              const idx = next.findIndex((t) => t.otherId === otherId);
+              const entry = {
+                otherId,
+                otherPseudo,
+                lastAt: row.created_at ?? new Date().toISOString(),
+                lastText: row.content ?? "",
+                lastFromMe: row.from_user_id === myId,
+              };
+
+              if (idx === -1) next.unshift(entry);
+              else {
+                next.splice(idx, 1);
+                next.unshift(entry);
+              }
+              return next;
+            });
+          }
+        )
+        .subscribe();
+    })();
+
+    return () => {
+      alive = false;
+      if (channel) supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id, activeOtherId]);
+
+  // ====== THREAD SELECT ======
+  async function openThread(otherId: string, otherPseudo: string) {
+    if (!me?.id) return;
+    setActiveOtherId(otherId);
+    setActiveOtherPseudo(otherPseudo);
+
+    // reload conversation from DB to be safe
+    const myId = me.id;
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, from_user_id, to_user_id, from_pseudo, to_pseudo, content, created_at")
+      .or(`and(from_user_id.eq.${myId},to_user_id.eq.${otherId}),and(from_user_id.eq.${otherId},to_user_id.eq.${myId})`)
+      .order("created_at", { ascending: true });
+
+    if (!error) setMessages((data ?? []) as MessageRow[]);
+  }
+
+  // ====== SEND ======
+  async function send() {
+    if (!me?.id) return;
     setError("");
-    setMessageInfo("");
+    setInfo("");
+
+    const content = text.trim();
+    if (!content) return;
+    if (!activeOtherId) {
+      setError("Choisis une conversation.");
+      return;
+    }
 
     try {
-      if (!currentUserId) {
-        throw new Error("Utilisateur non connecté.");
-      }
-
-      if (!selectedUserId) {
-        throw new Error("Choisis une conversation.");
-      }
-
-      const content = draft.trim();
-      if (!content) {
-        throw new Error("Le message est vide.");
-      }
-
-      setSending(true);
+      const fromPseudo = profile?.pseudo || "Membre";
 
       const { data, error } = await supabase
         .from("messages")
         .insert({
-          sender_id: currentUserId,
-          recipient_id: selectedUserId,
+          from_user_id: me.id,
+          to_user_id: activeOtherId,
+          from_pseudo: fromPseudo,
+          to_pseudo: activeOtherPseudo || "Membre",
           content,
         })
-        .select("id, sender_id, recipient_id, content, created_at")
+        .select("id, from_user_id, to_user_id, from_pseudo, to_pseudo, content, created_at")
         .single();
 
-      if (error) {
-        throw new Error(error.message);
-      }
+      if (error) throw new Error(error.message);
 
       if (data) {
         const row = data as MessageRow;
-        setMessages((prev) => {
-          const exists = prev.some((msg) => msg.id === row.id);
-          if (exists) return prev;
-          return [...prev, row];
-        });
+        setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        setText("");
       }
-
-      setDraft("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Impossible d'envoyer le message.");
-    } finally {
-      setSending(false);
+    } catch (e: any) {
+      setError(e?.message || "Impossible d’envoyer.");
     }
   }
 
-  function startConversation(userId: string) {
-    setSelectedUserId(userId);
-    setError("");
-    setMessageInfo("");
-  }
+  const filteredThreads = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return threads;
+    return threads.filter((t) => `${t.otherPseudo} ${t.lastText}`.toLowerCase().includes(q));
+  }, [threads, query]);
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl sm:p-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.14),transparent_25%),radial-gradient(circle_at_bottom_left,rgba(255,170,60,0.10),transparent_30%)]" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      {/* Header premium */}
+      <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-8">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
+        <div className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
+              <MessageCircle className="h-3.5 w-3.5" />
               Messages
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
               Conversations privées
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62 sm:text-base">
-              Une messagerie privée propre, utile et cohérente avec le reste du site.
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
+              Propre, rapide, stable. Realtime sécurisé (pas de crash).
             </p>
+
+            {profile ? (
+              <div className="mt-5">
+                <ProfileName profile={profile} size="md" showTitle showBadge />
+              </div>
+            ) : null}
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <TopPill label="Conversations" value={conversations.length} />
-            <TopPill label="Contacts" value={profiles.length} />
-          </div>
+          <button
+            onClick={refresh}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10 disabled:opacity-70"
+          >
+            <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+            Actualiser
+          </button>
         </div>
       </section>
 
-      {messageInfo ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-          {messageInfo}
+      {error ? (
+        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {error}
         </div>
       ) : null}
-
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          {error}
+      {info ? (
+        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          {info}
         </div>
       ) : null}
 
       {loading ? (
-        <div className="grid gap-4 xl:grid-cols-[0.92fr_1.4fr]">
-          <div className="h-[680px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-          <div className="h-[680px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
+        <div className="grid gap-4 lg:grid-cols-[0.9fr_1.4fr]">
+          <div className="h-[560px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
+          <div className="h-[560px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[0.92fr_1.4fr]">
-          <aside className="space-y-4">
-            <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-              <h2 className="text-xl font-black text-white">Nouveau contact</h2>
-
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Chercher un membre..."
-                className="mt-4 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
-              />
-
-              <div className="mt-4 max-h-[250px] space-y-2 overflow-auto pr-1">
-                {filteredProfiles.map((profile) => (
-                  <button
-                    key={profile.id}
-                    type="button"
-                    onClick={() => startConversation(profile.id)}
-                    className={cx(
-                      "w-full rounded-2xl border p-4 text-left transition",
-                      selectedUserId === profile.id
-                        ? "border-rose-400/25 bg-white/10"
-                        : "border-white/10 bg-white/5 hover:bg-white/10"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {profile.pseudo || "Membre"}
-                        </p>
-                        <p className="mt-1 text-xs text-white/45">{profile.id}</p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-1">
-                        {profile.is_admin ? (
-                          <span className="rounded-full border border-red-400/20 bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-300">
-                            ADMIN
-                          </span>
-                        ) : null}
-                        {profile.is_vip ? (
-                          <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2 py-1 text-[10px] font-bold text-yellow-300">
-                            VIP
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-
-                {filteredProfiles.length === 0 ? (
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/55">
-                    Aucun profil trouvé.
-                  </div>
-                ) : null}
+        <div className="grid gap-4 lg:grid-cols-[0.9fr_1.4fr]">
+          {/* Left: threads */}
+          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xl font-black text-white">Conversations</div>
+              <div className="grid h-10 w-10 place-items-center rounded-2xl border border-white/10 bg-white/5">
+                <Users className="h-4 w-4 text-white/80" />
               </div>
-            </section>
+            </div>
 
-            <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-              <h2 className="text-xl font-black text-white">Conversations</h2>
+            <div className="mt-4 relative">
+              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Chercher..."
+                className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
+              />
+            </div>
 
-              <div className="mt-4 max-h-[340px] space-y-2 overflow-auto pr-1">
-                {conversations.length === 0 ? (
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/55">
-                    Aucune conversation pour l’instant.
-                  </div>
-                ) : (
-                  conversations.map((conv) => (
+            <div className="mt-4 space-y-3">
+              {filteredThreads.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
+                  Aucune conversation.
+                </div>
+              ) : (
+                filteredThreads.map((t) => {
+                  const active = t.otherId === activeOtherId;
+                  return (
                     <button
-                      key={conv.userId}
-                      type="button"
-                      onClick={() => startConversation(conv.userId)}
+                      key={t.otherId}
+                      onClick={() => openThread(t.otherId, t.otherPseudo)}
                       className={cx(
                         "w-full rounded-2xl border p-4 text-left transition",
-                        selectedUserId === conv.userId
-                          ? "border-rose-400/25 bg-white/10"
+                        active
+                          ? "border-white/10 bg-white/12"
                           : "border-white/10 bg-white/5 hover:bg-white/10"
                       )}
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold text-white">{conv.pseudo}</p>
-                            {conv.isAdmin ? (
-                              <span className="rounded-full border border-red-400/20 bg-red-500/10 px-2 py-0.5 text-[10px] font-bold text-red-300">
-                                ADMIN
-                              </span>
-                            ) : null}
-                            {conv.isVip ? (
-                              <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-bold text-yellow-300">
-                                VIP
-                              </span>
-                            ) : null}
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-black text-white">
+                            {t.otherPseudo}
                           </div>
-
-                          <p className="mt-2 line-clamp-1 text-sm text-white/55">
-                            {conv.lastMessage}
-                          </p>
+                          <div className="mt-1 truncate text-xs text-white/55">
+                            {t.lastFromMe ? "Toi: " : ""}{t.lastText}
+                          </div>
                         </div>
-
-                        <p className="shrink-0 text-xs text-white/38">
-                          {formatTime(conv.lastDate)}
-                        </p>
+                        <div className="text-[11px] text-white/45">
+                          {fmtTime(t.lastAt)}
+                        </div>
                       </div>
                     </button>
-                  ))
-                )}
-              </div>
-            </section>
-          </aside>
+                  );
+                })
+              )}
+            </div>
+          </section>
 
+          {/* Right: chat */}
           <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            {!selectedUserId ? (
-              <div className="flex h-[620px] items-center justify-center rounded-[24px] border border-white/10 bg-white/5 text-center">
-                <div>
-                  <h2 className="text-2xl font-black text-white">Aucune conversation ouverte</h2>
-                  <p className="mt-2 text-sm text-white/58">
-                    Choisis un membre à gauche pour commencer à discuter.
-                  </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.22em] text-white/45">
+                  Conversation
+                </div>
+                <div className="mt-1 text-xl font-black text-white">
+                  {activeOtherId ? activeOtherPseudo : "Aucune sélection"}
                 </div>
               </div>
-            ) : (
-              <div className="flex h-[620px] flex-col">
-                <div className="rounded-[24px] border border-white/10 bg-white/5 px-5 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm text-white/45">Conversation avec</p>
-                      <h2 className="mt-1 text-2xl font-black text-white">
-                        {selectedProfile?.pseudo || "Membre"}
-                      </h2>
-                    </div>
+            </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setSelectedUserId("")}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/10"
-                    >
-                      Fermer
-                    </button>
+            <div className="mt-4 h-[360px] overflow-auto rounded-2xl border border-white/10 bg-black/20 p-4">
+              {messages.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-center">
+                  <div>
+                    <div className="text-sm font-black text-white">Aucun message</div>
+                    <div className="mt-2 text-xs text-white/55">
+                      Choisis une conversation et écris.
+                    </div>
                   </div>
                 </div>
-
-                <div className="mt-4 flex-1 space-y-3 overflow-auto rounded-[24px] border border-white/10 bg-black/20 p-4">
-                  {threadMessages.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-center">
-                      <div>
-                        <p className="text-lg font-bold text-white">Aucun message</p>
-                        <p className="mt-2 text-sm text-white/55">
-                          Écris le premier message de cette conversation.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    threadMessages.map((msg) => {
-                      const mine = msg.sender_id === currentUserId;
-
-                      return (
+              ) : (
+                <div className="space-y-3">
+                  {messages.map((m) => {
+                    const mine = m.from_user_id === me?.id;
+                    return (
+                      <div key={m.id} className={cx("flex", mine ? "justify-end" : "justify-start")}>
                         <div
-                          key={msg.id}
-                          className={cx("flex", mine ? "justify-end" : "justify-start")}
+                          className={cx(
+                            "max-w-[88%] rounded-2xl px-4 py-3 text-sm",
+                            mine
+                              ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
+                              : "border border-white/10 bg-white/10 text-white"
+                          )}
                         >
-                          <div
-                            className={cx(
-                              "max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-[0_10px_30px_rgba(0,0,0,0.16)]",
-                              mine
-                                ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
-                                : "border border-white/10 bg-white/10 text-white"
-                            )}
-                          >
-                            <p className="whitespace-pre-wrap leading-6">{msg.content}</p>
-                            <p
-                              className={cx(
-                                "mt-2 text-[11px]",
-                                mine ? "text-black/70" : "text-white/38"
-                              )}
-                            >
-                              {formatTime(msg.created_at)}
-                            </p>
+                          <div className={cx("mb-1 text-[11px] font-black", mine ? "text-black/70" : "text-white/60")}>
+                            {mine ? (profile?.pseudo || "Toi") : (m.from_pseudo || activeOtherPseudo || "Membre")}
+                            <span className={cx("ml-2 font-normal", mine ? "text-black/60" : "text-white/45")}>
+                              {fmtTime(m.created_at)}
+                            </span>
                           </div>
+                          <div className="whitespace-pre-wrap leading-6">{m.content}</div>
                         </div>
-                      );
-                    })
-                  )}
+                      </div>
+                    );
+                  })}
                   <div ref={bottomRef} />
                 </div>
+              )}
+            </div>
 
-                <div className="mt-4 flex gap-3">
-                  <textarea
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Écris ton message..."
-                    className="min-h-[68px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
-                  />
-                  <button
-                    type="button"
-                    disabled={sending}
-                    onClick={handleSendMessage}
-                    className="rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3 text-sm font-black text-black transition hover:opacity-95 disabled:opacity-70"
-                  >
-                    {sending ? "..." : "Envoyer"}
-                  </button>
-                </div>
-              </div>
-            )}
+            <div className="mt-4 flex gap-3">
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={activeOtherId ? "Écris un message..." : "Choisis une conversation"}
+                className="min-h-[66px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
+              />
+              <button
+                onClick={send}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3 text-sm font-black text-black hover:opacity-95"
+              >
+                <Send className="h-4 w-4" />
+                Envoyer
+              </button>
+            </div>
           </section>
         </div>
       )}
-    </div>
-  );
-}
-
-function TopPill({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | number;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-      <p className="text-xs uppercase tracking-[0.2em] text-white/40">{label}</p>
-      <p className="mt-1 text-lg font-black text-white">{value}</p>
     </div>
   );
 }

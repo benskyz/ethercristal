@@ -23,8 +23,6 @@ import {
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import ProfileName, { DisplayProfile } from "@/components/ProfileName";
 import { createSafeChannel } from "@/lib/realtime";
-
-// LiveKit UI
 import {
   LiveKitRoom,
   GridLayout,
@@ -86,21 +84,17 @@ export default function DesirProtectedPage() {
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
-
   const [state, setState] = useState<DesirState>({ phase: "idle" });
 
-  // controls
   const [sound, setSound] = useState(true);
   const [full, setFull] = useState<FullTarget>(null);
 
-  // chat
   const [chat, setChat] = useState("");
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
 
-  // ===== load profile/auth =====
   async function loadProfile() {
     setError("");
     setLoading(true);
@@ -126,10 +120,8 @@ export default function DesirProtectedPage() {
 
   useEffect(() => {
     loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ===== API helpers =====
   async function apiJSON(url: string, init?: RequestInit) {
     const res = await fetch(url, {
       ...init,
@@ -167,18 +159,23 @@ export default function DesirProtectedPage() {
     try {
       json = await apiJSON(`/api/livekit/token?room=${encodeURIComponent(roomName)}`, { method: "GET" });
     } catch {
-      json = await apiJSON("/api/livekit/token", { method: "POST", body: JSON.stringify({ room: roomName }) });
+      json = await apiJSON("/api/livekit/token", {
+        method: "POST",
+        body: JSON.stringify({ room: roomName }),
+      });
     }
+
     const token = pickString(json, ["token", "accessToken", "jwt"]);
-    if (!token) throw new Error("Token LiveKit introuvable (api/livekit/token).");
+    if (!token) throw new Error("Token LiveKit introuvable.");
+
     const url =
       pickMaybe(json, ["url", "serverUrl", "wsUrl", "livekitUrl"]) ||
       (process.env.NEXT_PUBLIC_LIVEKIT_URL as any) ||
       null;
+
     return { token, url };
   }
 
-  // ===== match flow =====
   async function startQueue() {
     setError("");
     setInfo("");
@@ -218,7 +215,6 @@ export default function DesirProtectedPage() {
     }
   }
 
-  // ===== polling queue/matched =====
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -240,7 +236,6 @@ export default function DesirProtectedPage() {
     };
   }, [state.phase]);
 
-  // ===== fullscreen body lock =====
   useEffect(() => {
     if (!full) return;
     const prev = document.body.style.overflow;
@@ -250,16 +245,13 @@ export default function DesirProtectedPage() {
     };
   }, [full]);
 
-  // ===== chat realtime (broadcast) =====
   const chatKey = useMemo(() => {
-    // unique “room” key for chat
     if (state.phase === "connected") return `desir:${state.roomName}`;
     if (state.phase === "matched") return `desir:${state.roomName}`;
     return "desir:lobby";
   }, [state.phase, (state as any).roomName]);
 
   useEffect(() => {
-    // reset chat messages on room change
     setChatMsgs([]);
     let alive = true;
 
@@ -301,17 +293,14 @@ export default function DesirProtectedPage() {
       mine: true,
     };
 
-    // append locally
     setChatMsgs((prev) => [...prev, msg].slice(-200));
     setChat("");
 
-    // broadcast (works even if DB missing)
     const { channel } = createSafeChannel(supabase as any, `desir-chat-send-${chatKey}`);
     try {
       await channel.send({ type: "broadcast", event: "chat", payload: msg });
     } catch {}
 
-    // best-effort persistence (if your room_messages table supports it)
     try {
       await supabase.from("room_messages").insert({
         room_id: chatKey,
@@ -320,7 +309,6 @@ export default function DesirProtectedPage() {
         content,
       });
     } catch {
-      // ignore if table/rls doesn’t allow
     } finally {
       try {
         supabase.removeChannel(channel);
@@ -328,11 +316,8 @@ export default function DesirProtectedPage() {
     }
   }
 
-  const logoSrc = "/logo.png"; // si tu as un vrai logo dans /public/logo.png
-
   return (
-    <div className="space-y-6">
-      {/* Fullscreen overlay */}
+    <div className="space-y-4">
       {full ? (
         <FullscreenOverlay title={full === "me" ? "Toi" : "Partenaire"} onClose={() => setFull(null)}>
           {state.phase === "connected" ? (
@@ -347,24 +332,19 @@ export default function DesirProtectedPage() {
         </FullscreenOverlay>
       ) : null}
 
-      {/* TOP BAR (logo + few buttons) */}
-      <header className="relative overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
+      {/* top compact */}
+      <header className="relative overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.10),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.08),transparent_36%)]" />
 
         <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          {/* Logo block */}
-          <div className="flex items-center gap-3">
-            <LogoBadge src={logoSrc} />
+          <div className="flex min-w-0 items-center gap-3">
+            <LogoBadge />
             <div className="min-w-0">
               <div className="text-xs uppercase tracking-[0.28em] text-white/45">EtherCristal</div>
-              <div className="text-2xl font-black text-white">Désir Intense</div>
-              <div className="mt-1 text-sm text-white/60">
-                Cam-to-cam premium
-              </div>
+              <div className="truncate text-2xl font-black text-white">Désir Intense</div>
             </div>
           </div>
 
-          {/* minimal actions */}
           <div className="flex flex-wrap gap-2">
             <TopBtn icon={<LayoutDashboard className="h-4 w-4" />} label="Dashboard" onClick={() => router.push("/dashboard")} />
             <TopBtn icon={<Users className="h-4 w-4" />} label="Salons" onClick={() => router.push("/salons")} />
@@ -378,28 +358,13 @@ export default function DesirProtectedPage() {
                 <Shield className="h-4 w-4" /> Admin
               </button>
             ) : null}
-
-            <button
-              onClick={() => setSound((v) => !v)}
-              className={cx(
-                "inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-black transition",
-                sound
-                  ? "border border-white/10 bg-white/10 text-white hover:bg-white/15"
-                  : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
-              )}
-              title="Son partenaire"
-            >
-              {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              Son
-            </button>
           </div>
         </div>
 
-        {/* small identity row */}
         {profile && !loading ? (
-          <div className="relative mt-4 rounded-[22px] border border-white/10 bg-black/30 p-4">
+          <div className="relative mt-3 rounded-[20px] border border-white/10 bg-black/30 p-3">
             <ProfileName profile={profile} size="md" showTitle showBadge />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
                 {state.phase.toUpperCase()}
               </span>
@@ -427,18 +392,17 @@ export default function DesirProtectedPage() {
                 </button>
               )}
 
-              {isAdmin ? (
-                <button
-                  onClick={async () => {
-                    setError(""); setInfo("");
-                    try { await desirEndSession(); setInfo("Session terminée."); setState({ phase: "idle" }); }
-                    catch (e: any) { setError(e?.message || "Impossible."); }
-                  }}
-                  className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-200 hover:bg-red-500/15"
-                >
-                  <Square className="h-4 w-4" /> End
-                </button>
-              ) : null}
+              <button
+                onClick={() => setSound((v) => !v)}
+                className={cx(
+                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black transition",
+                  sound
+                    ? "border border-white/10 bg-white/10 text-white hover:bg-white/15"
+                    : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
+                )}
+              >
+                {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />} Son
+              </button>
             </div>
           </div>
         ) : null}
@@ -455,118 +419,113 @@ export default function DesirProtectedPage() {
         </div>
       ) : null}
 
-      {/* TWO BIG VIDEO SQUARES */}
-      <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-[0.22em] text-white/45">Stage</div>
-            <div className="mt-1 text-xl font-black text-white">Cam-to-cam</div>
-          </div>
-          <span className="inline-flex items-center gap-2 text-xs text-white/55">
-            <Sparkles className="h-4 w-4" /> Plein écran par tuile
-          </span>
-        </div>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          {state.phase !== "connected" ? (
-            <>
-              <BigVideoCard title="Toi" onFull={() => setFull("me")} placeholder="En attente…" />
-              <BigVideoCard title="Partenaire" onFull={() => setFull("them")} placeholder="En attente…" />
-            </>
-          ) : (
-            <div className="lg:col-span-2 rounded-[24px] border border-white/10 bg-black/50 p-3">
-              <LiveKitRoom
-                token={state.token}
-                serverUrl={state.url ?? undefined}
-                connect={true}
-                audio={true}
-                video={true}
-                data-lk-theme="default"
-                style={{ width: "100%" }}
-              >
-                <TwoBigTiles
-                  sound={sound}
-                  onFullMe={() => setFull("me")}
-                  onFullThem={() => setFull("them")}
-                  onStop={stopEverything}
-                />
-              </LiveKitRoom>
+      {/* videos + chat side by side on desktop */}
+      <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.22em] text-white/45">Stage</div>
+              <div className="mt-1 text-xl font-black text-white">Cam-to-cam</div>
             </div>
-          )}
-        </div>
-      </section>
-
-      {/* BOTTOM = CHAT ONLY */}
-      <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-[0.22em] text-white/45">Chat</div>
-            <div className="mt-1 text-xl font-black text-white">Écrire</div>
           </div>
-          <span className="text-xs text-white/45">{chatKey}</span>
-        </div>
 
-        <div className="mt-4 h-[260px] overflow-auto rounded-2xl border border-white/10 bg-black/20 p-4">
-          {chatMsgs.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-center">
-              <div>
-                <div className="text-sm font-black text-white">Aucun message</div>
-                <div className="mt-2 text-xs text-white/55">Écris en bas.</div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {state.phase !== "connected" ? (
+              <>
+                <BigVideoCard title="Toi" onFull={() => setFull("me")} placeholder="En attente…" compact />
+                <BigVideoCard title="Partenaire" onFull={() => setFull("them")} placeholder="En attente…" compact />
+              </>
+            ) : (
+              <div className="lg:col-span-2 rounded-[20px] border border-white/10 bg-black/50 p-3">
+                <LiveKitRoom
+                  token={state.token}
+                  serverUrl={state.url ?? undefined}
+                  connect={true}
+                  audio={true}
+                  video={true}
+                  data-lk-theme="default"
+                  style={{ width: "100%" }}
+                >
+                  <TwoCompactTiles
+                    sound={sound}
+                    onFullMe={() => setFull("me")}
+                    onFullThem={() => setFull("them")}
+                    onStop={stopEverything}
+                  />
+                </LiveKitRoom>
               </div>
+            )}
+          </div>
+        </section>
+
+        {/* chat */}
+        <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.22em] text-white/45">Chat</div>
+              <div className="mt-1 text-xl font-black text-white">Écrire</div>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {chatMsgs.map((m) => (
-                <div key={m.id} className={cx("flex", m.mine ? "justify-end" : "justify-start")}>
-                  <div
-                    className={cx(
-                      "max-w-[88%] rounded-2xl px-4 py-3 text-sm",
-                      m.mine
-                        ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
-                        : "border border-white/10 bg-white/10 text-white"
-                    )}
-                  >
-                    <div className={cx("mb-1 text-[11px] font-black", m.mine ? "text-black/70" : "text-white/60")}>
-                      {m.pseudo}
-                      <span className={cx("ml-2 font-normal", m.mine ? "text-black/60" : "text-white/45")}>
-                        {new Date(m.at).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <div className="whitespace-pre-wrap leading-6">{m.content}</div>
-                  </div>
+            <span className="text-[11px] text-white/40">{chatKey}</span>
+          </div>
+
+          <div className="mt-4 h-[300px] xl:h-[420px] overflow-auto rounded-2xl border border-white/10 bg-black/20 p-4">
+            {chatMsgs.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-center">
+                <div>
+                  <div className="text-sm font-black text-white">Aucun message</div>
+                  <div className="mt-2 text-xs text-white/55">Écris ici.</div>
                 </div>
-              ))}
-              <div ref={chatBottomRef} />
-            </div>
-          )}
-        </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {chatMsgs.map((m) => (
+                  <div key={m.id} className={cx("flex", m.mine ? "justify-end" : "justify-start")}>
+                    <div
+                      className={cx(
+                        "max-w-[88%] rounded-2xl px-4 py-3 text-sm",
+                        m.mine
+                          ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
+                          : "border border-white/10 bg-white/10 text-white"
+                      )}
+                    >
+                      <div className={cx("mb-1 text-[11px] font-black", m.mine ? "text-black/70" : "text-white/60")}>
+                        {m.pseudo}
+                        <span className={cx("ml-2 font-normal", m.mine ? "text-black/60" : "text-white/45")}>
+                          {new Date(m.at).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <div className="whitespace-pre-wrap leading-6">{m.content}</div>
+                    </div>
+                  </div>
+                ))}
+                <div ref={chatBottomRef} />
+              </div>
+            )}
+          </div>
 
-        <div className="mt-4 flex gap-3">
-          <textarea
-            value={chat}
-            onChange={(e) => setChat(e.target.value)}
-            placeholder="Écris ici…"
-            className="min-h-[66px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
-            onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendChat();
-            }}
-          />
-          <button
-            onClick={sendChat}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3 text-sm font-black text-black hover:opacity-95"
-          >
-            <Send className="h-4 w-4" />
-            Envoyer
-          </button>
-        </div>
-
-        <div className="mt-2 text-[11px] text-white/35">Tip: Ctrl+Enter pour envoyer.</div>
-      </section>
+          <div className="mt-4 flex gap-3">
+            <textarea
+              value={chat}
+              onChange={(e) => setChat(e.target.value)}
+              placeholder="Écris ici…"
+              className="min-h-[66px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendChat();
+              }}
+            />
+            <button
+              onClick={sendChat}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3 text-sm font-black text-black hover:opacity-95"
+            >
+              <Send className="h-4 w-4" />
+              Envoyer
+            </button>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
-
-/* ===== UI components ===== */
 
 function TopBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
   return (
@@ -579,21 +538,10 @@ function TopBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string
   );
 }
 
-function LogoBadge({ src }: { src: string }) {
-  const [ok, setOk] = useState(true);
+function LogoBadge() {
   return (
-    <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-[22px] border border-white/10 bg-white/5">
-      {ok ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={src}
-          alt="logo"
-          className="h-full w-full object-cover"
-          onError={() => setOk(false)}
-        />
-      ) : (
-        <span className="text-2xl">💎</span>
-      )}
+    <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-[18px] border border-white/10 bg-white/5">
+      <span className="text-2xl">💎</span>
     </div>
   );
 }
@@ -602,13 +550,15 @@ function BigVideoCard({
   title,
   onFull,
   placeholder,
+  compact,
 }: {
   title: string;
   onFull: () => void;
   placeholder: string;
+  compact?: boolean;
 }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-black/40 p-3">
+    <div className="rounded-[20px] border border-white/10 bg-black/40 p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-black text-white/85">{title}</div>
         <button
@@ -620,7 +570,12 @@ function BigVideoCard({
         </button>
       </div>
 
-      <div className="mt-3 grid place-items-center aspect-square w-full overflow-hidden rounded-[18px] border border-white/10 bg-black/70 text-white/65">
+      <div
+        className={cx(
+          "mt-3 grid w-full place-items-center overflow-hidden rounded-[18px] border border-white/10 bg-black/70 text-white/65",
+          compact ? "aspect-[4/5] xl:aspect-square max-h-[420px]" : "aspect-square"
+        )}
+      >
         {placeholder}
       </div>
     </div>
@@ -656,7 +611,7 @@ function FullscreenOverlay({
   );
 }
 
-function TwoBigTiles({
+function TwoCompactTiles({
   sound,
   onFullMe,
   onFullThem,
@@ -671,10 +626,9 @@ function TwoBigTiles({
   const [cam, setCam] = useState(true);
   const [mic, setMic] = useState(true);
 
-  const tracks = useTracks(
-    [{ source: Track.Source.Camera, withPlaceholder: true }],
-    { onlySubscribed: false }
-  );
+  const tracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
+    onlySubscribed: false,
+  });
 
   async function toggleCam() {
     const next = !cam;
@@ -683,6 +637,7 @@ function TwoBigTiles({
       await localParticipant.setCameraEnabled(next);
     } catch {}
   }
+
   async function toggleMic() {
     const next = !mic;
     setMic(next);
@@ -693,7 +648,6 @@ function TwoBigTiles({
 
   return (
     <div className="space-y-4">
-      {/* mini controls row */}
       <div className="flex flex-wrap gap-3">
         <button
           onClick={toggleCam}
@@ -729,23 +683,23 @@ function TwoBigTiles({
           Stop
         </button>
 
-        <span className="text-xs text-white/40 self-center">Son: {sound ? "ON" : "OFF"}</span>
+        <span className="self-center text-xs text-white/40">Son: {sound ? "ON" : "OFF"}</span>
       </div>
 
-      {/* 2 big squares */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-[24px] border border-white/10 bg-black/40 p-3">
+        <div className="rounded-[20px] border border-white/10 bg-black/40 p-3">
           <div className="flex items-center justify-between">
             <div className="text-sm font-black text-white/85">Toi</div>
             <button
               onClick={onFullMe}
               className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white/80 hover:bg-white/10"
             >
-              <Expand className="h-4 w-4" /> Plein écran
+              <Expand className="h-4 w-4" />
+              Plein écran
             </button>
           </div>
           <div className="mt-3 overflow-hidden rounded-[18px] border border-white/10 bg-black/70">
-            <div className="aspect-square w-full">
+            <div className="aspect-[4/5] xl:aspect-square w-full max-h-[420px]">
               <GridLayout tracks={tracks} style={{ height: "100%" as any }}>
                 <ParticipantTile />
               </GridLayout>
@@ -753,18 +707,19 @@ function TwoBigTiles({
           </div>
         </div>
 
-        <div className="rounded-[24px] border border-white/10 bg-black/40 p-3">
+        <div className="rounded-[20px] border border-white/10 bg-black/40 p-3">
           <div className="flex items-center justify-between">
             <div className="text-sm font-black text-white/85">Partenaire</div>
             <button
               onClick={onFullThem}
               className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white/80 hover:bg-white/10"
             >
-              <Expand className="h-4 w-4" /> Plein écran
+              <Expand className="h-4 w-4" />
+              Plein écran
             </button>
           </div>
           <div className="mt-3 overflow-hidden rounded-[18px] border border-white/10 bg-black/70">
-            <div className="aspect-square w-full">
+            <div className="aspect-[4/5] xl:aspect-square w-full max-h-[420px]">
               <GridLayout tracks={tracks} style={{ height: "100%" as any }}>
                 <ParticipantTile />
               </GridLayout>
@@ -777,7 +732,10 @@ function TwoBigTiles({
 }
 
 function LiveTilePreview() {
-  const tracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], { onlySubscribed: false });
+  const tracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
+    onlySubscribed: false,
+  });
+
   return (
     <div className="overflow-hidden rounded-[18px] border border-white/10 bg-black/60">
       <div style={{ height: "55vh" as any }}>

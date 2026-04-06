@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Mail, Lock, User, Eye, EyeOff, ArrowRight, ShieldCheck } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
@@ -28,7 +28,6 @@ function passwordScore(pw: string) {
 
 export default function EnterPage() {
   const router = useRouter();
-  const params = useSearchParams();
 
   const [mode, setMode] = useState<"login" | "register">("login");
 
@@ -51,13 +50,6 @@ export default function EnterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // switch login/register si url le suggère
-  useEffect(() => {
-    const m = params?.get("mode");
-    if (m === "register") setMode("register");
-    if (m === "login") setMode("login");
-  }, [params]);
-
   const pwScore = useMemo(() => passwordScore(password), [password]);
 
   const pwLabel = useMemo(() => {
@@ -70,11 +62,10 @@ export default function EnterPage() {
   }, [pwScore, password]);
 
   const emailRedirectTo = useMemo(() => {
-    // prod: tu veux absolument ethercristal.site
-    // local: ok aussi si tu testes en local
-    const origin =
-      typeof window !== "undefined" ? window.location.origin : "https://www.ethercristal.site";
+    // prod fixe
     const prod = "https://www.ethercristal.site";
+    // local OK si tu testes
+    const origin = typeof window !== "undefined" ? window.location.origin : prod;
     const base = origin.includes("localhost") || origin.includes("127.0.0.1") ? origin : prod;
     return `${base}/login?confirm=1&next=/dashboard`;
   }, []);
@@ -116,7 +107,6 @@ export default function EnterPage() {
         return;
       }
 
-      // register
       const { data, error: signUpErr } = await supabase.auth.signUp({
         email: e,
         password: p,
@@ -131,8 +121,7 @@ export default function EnterPage() {
 
       if (signUpErr) throw signUpErr;
 
-      // Optionnel: si ton projet crée un row profiles via trigger, ok.
-      // Sinon, on essaie d'upsert (ne casse pas si RLS bloque).
+      // Upsert profile (si RLS bloque, ça n’empêche pas le signup)
       if (data?.user?.id) {
         await supabase.from("profiles").upsert({
           id: data.user.id,
@@ -156,7 +145,7 @@ export default function EnterPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-0px)] bg-[#07070a] text-white">
+    <div className="min-h-screen bg-[#07070a] text-white">
       {/* background premium */}
       <div className="pointer-events-none fixed inset-0 -z-10">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
@@ -172,11 +161,11 @@ export default function EnterPage() {
               <ShieldCheck className="h-6 w-6 text-white/85" />
             </div>
             <div className="text-xs uppercase tracking-[0.26em] text-white/45">
-              Accès réservé 18+
+              Accès privé
             </div>
-            <h1 className="mt-2 text-3xl font-black tracking-tight">Espace privé</h1>
+            <h1 className="mt-2 text-3xl font-black tracking-tight">Connexion</h1>
             <p className="mt-2 text-sm text-white/60">
-              Connexion rapide. Style premium. Zéro débordement.
+              Petit login propre, centré, premium.
             </p>
           </div>
 
@@ -217,7 +206,6 @@ export default function EnterPage() {
             ) : null}
 
             <div className="mt-5 space-y-4">
-              {/* Pseudo (register only) */}
               {mode === "register" ? (
                 <div>
                   <label className="mb-2 block text-xs font-black uppercase tracking-[0.22em] text-white/45">
@@ -228,14 +216,13 @@ export default function EnterPage() {
                     <input
                       value={pseudo}
                       onChange={(e) => setPseudo(e.target.value)}
-                      placeholder="Ton pseudo (ex: EtherCristal)"
+                      placeholder="Ton pseudo"
                       className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
                     />
                   </div>
                 </div>
               ) : null}
 
-              {/* Email */}
               <div>
                 <label className="mb-2 block text-xs font-black uppercase tracking-[0.22em] text-white/45">
                   Email
@@ -253,12 +240,10 @@ export default function EnterPage() {
                 </div>
               </div>
 
-              {/* Password */}
               <div>
                 <label className="mb-2 block text-xs font-black uppercase tracking-[0.22em] text-white/45">
                   Mot de passe
                 </label>
-
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
                   <input
@@ -300,7 +285,6 @@ export default function EnterPage() {
                 ) : null}
               </div>
 
-              {/* Submit */}
               <button
                 onClick={onSubmit}
                 disabled={loading}
@@ -310,40 +294,14 @@ export default function EnterPage() {
                 <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
               </button>
 
-              {/* Footer links */}
-              <div className="pt-2 text-center text-xs text-white/45">
-                {mode === "login" ? (
-                  <>
-                    Pas encore inscrit ?{" "}
-                    <button
-                      onClick={() => setMode("register")}
-                      className="font-black text-white/80 hover:text-white"
-                    >
-                      Créer un compte
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    Déjà membre ?{" "}
-                    <button
-                      onClick={() => setMode("login")}
-                      className="font-black text-white/80 hover:text-white"
-                    >
-                      Se connecter
-                    </button>
-                  </>
-                )}
-              </div>
-
               <div className="pt-2 text-center text-[11px] text-white/35">
-                En continuant, tu confirmes avoir 18+.
+                EtherCristal • privé • premium
               </div>
             </div>
           </div>
 
-          {/* small bottom spacing */}
           <div className="mt-6 text-center text-[11px] text-white/30">
-            EtherCristal • privé • premium
+            Connexion → Dashboard. Rien d’autre.
           </div>
         </div>
       </div>

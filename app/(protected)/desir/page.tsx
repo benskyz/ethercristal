@@ -19,6 +19,7 @@ import {
   Volume2,
   VolumeX,
   Send,
+  RefreshCw,
 } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import ProfileName, { DisplayProfile } from "@/components/ProfileName";
@@ -69,6 +70,10 @@ function pickMaybe(obj: any, keys: string[]) {
   return s || null;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function formatTime(value?: string | null) {
   if (!value) return "";
   const d = new Date(value);
@@ -79,14 +84,11 @@ function formatTime(value?: string | null) {
   });
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export default function DesirPage() {
   const router = useRouter();
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -167,10 +169,18 @@ export default function DesirPage() {
   }
 
   async function apiJSON(url: string, init?: RequestInit) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const accessToken = session?.access_token;
+
     const res = await fetch(url, {
       ...init,
+      credentials: "include",
       headers: {
         "content-type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(init?.headers || {}),
       },
     });
@@ -221,6 +231,10 @@ export default function DesirPage() {
   async function startQueue() {
     setError("");
     setInfo("");
+
+    if (!localStarted) {
+      await startLocalPreview();
+    }
 
     try {
       const json = await desirJoinQueue();
@@ -276,8 +290,7 @@ export default function DesirPage() {
     }
 
     setState({ phase: "idle" });
-
-    await sleep(350);
+    await sleep(500);
     await startQueue();
   }
 
@@ -378,7 +391,10 @@ export default function DesirPage() {
     setChatMessages((prev) => [...prev, msg].slice(-200));
     setChat("");
 
-    const { channel } = createSafeChannel(supabase as any, `desir-chat-send-${chatKey}`);
+    const { channel } = createSafeChannel(
+      supabase as any,
+      `desir-chat-send-${chatKey}`
+    );
 
     channel.send({
       type: "broadcast",
@@ -550,6 +566,14 @@ export default function DesirPage() {
                 Admin
               </button>
             ) : null}
+
+            <button
+              onClick={loadProfile}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/10"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </button>
           </div>
         </div>
 
@@ -622,7 +646,11 @@ export default function DesirPage() {
                     : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
                 )}
               >
-                {camEnabled ? <Camera className="h-4 w-4" /> : <CameraOff className="h-4 w-4" />}
+                {camEnabled ? (
+                  <Camera className="h-4 w-4" />
+                ) : (
+                  <CameraOff className="h-4 w-4" />
+                )}
                 Cam
               </button>
 
@@ -648,7 +676,11 @@ export default function DesirPage() {
                     : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
                 )}
               >
-                {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                {soundEnabled ? (
+                  <Volume2 className="h-4 w-4" />
+                ) : (
+                  <VolumeX className="h-4 w-4" />
+                )}
                 Son
               </button>
 
@@ -768,7 +800,9 @@ export default function DesirPage() {
                           {formatTime(m.at)}
                         </span>
                       </div>
-                      <div className="whitespace-pre-wrap leading-6">{m.content}</div>
+                      <div className="whitespace-pre-wrap leading-6">
+                        {m.content}
+                      </div>
                     </div>
                   </div>
                 ))}

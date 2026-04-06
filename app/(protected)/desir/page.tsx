@@ -7,9 +7,9 @@ import {
   Users,
   ShoppingBag,
   Shield,
-  Sparkles,
   Play,
   Square,
+  SkipForward,
   Expand,
   X,
   Mic,
@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import ProfileName, { DisplayProfile } from "@/components/ProfileName";
+import { createSafeChannel } from "@/lib/realtime";
 
 const supabase = requireSupabaseBrowserClient();
 
@@ -29,15 +30,25 @@ type ProfileRow = DisplayProfile & {
   id: string;
   pseudo?: string | null;
   email?: string | null;
+  is_admin?: boolean | null;
+  role?: string | null;
+};
+
+type DesirPhase = "idle" | "queue" | "matched" | "connected";
+
+type DesirState = {
+  phase: DesirPhase;
+  roomName?: string | null;
+  sessionId?: string | null;
 };
 
 type FullTarget = "me" | "them" | null;
 
-type LocalChatMessage = {
+type ChatMsg = {
   id: string;
   pseudo: string;
   content: string;
-  createdAt: string;
+  at: string;
   mine?: boolean;
 };
 
@@ -45,11 +56,31 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+function pickString(obj: any, keys: string[]) {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function pickMaybe(obj: any, keys: string[]) {
+  const s = pickString(obj, keys);
+  return s || null;
+}
+
 function formatTime(value?: string | null) {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString("fr-CA", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export default function DesirPage() {
@@ -63,6 +94,8 @@ export default function DesirPage() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
+  const [state, setState] = useState<DesirState>({ phase: "idle" });
+
   const [localStarted, setLocalStarted] = useState(false);
   const [camEnabled, setCamEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
@@ -71,7 +104,7 @@ export default function DesirPage() {
   const [full, setFull] = useState<FullTarget>(null);
 
   const [chat, setChat] = useState("");
-  const [chatMessages, setChatMessages] = useState<LocalChatMessage[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
 
   const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
 
@@ -95,6 +128,11 @@ export default function DesirPage() {
     ],
     [router]
   );
+
+  const chatKey = useMemo(() => {
+    if (state.roomName) return `desir:${state.roomName}`;
+    return "desir:lobby";
+  }, [state.roomName]);
 
   async function loadProfile() {
     setError("");
@@ -128,10 +166,133 @@ export default function DesirPage() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  async function apiJSON(url: string, init?: RequestInit) {
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        ...(init?.headers || {}),
+      },
+    });
+
+    const text = await res.text();
+    let json: any = null;
+
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = { raw: text };
+    }
+
+    if (!res.ok) {
+      const msg =
+        pickString(json, ["error", "message"]) || `Erreur API (${res.status})`;
+      throw new Error(msg);
+    }
+
+    return json;
+  }
+
+  async function desirJoinQueue() {
+    return apiJSON("/api/desir/join", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async function desirLeaveQueue() {
+    return apiJSON("/api/desir/leave", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async function desirActiveSession() {
+    return apiJSON("/api/desir/active-session", { method: "GET" });
+  }
+
+  async function desirEndSession() {
+    return apiJSON("/api/desir/end", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async function startQueue() {
+    setError("");
+    setInfo("");
+
+    try {
+      const json = await desirJoinQueue();
+
+      const roomName = pickMaybe(json, ["roomName", "room", "room_name"]);
+      const sessionId = pickMaybe(json, ["sessionId", "session_id", "id"]);
+
+      if (roomName) {
+        setState({ phase: "matched", roomName, sessionId });
+        setInfo("Partenaire trouvé. Clique Connect.");
+      } else {
+        setState({ phase: "queue" });
+        setInfo("Recherche en cours…");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Impossible de démarrer la recherche.");
+      setState({ phase: "idle" });
+    }
+  }
+
+  async function connectMatch() {
+    if (!state.roomName) return;
+    setError("");
+    setInfo("Connexion au partenaire…");
+    setState((prev) => ({
+      ...prev,
+      phase: "connected",
+    }));
+  }
+
+  async function stopEverything() {
+    setError("");
+    setInfo("");
+
+    try {
+      await desirLeaveQueue();
+    } catch {
+      // ignore
+    }
+
+    setState({ phase: "idle" });
+    setInfo("Session arrêtée.");
+  }
+
+  async function nextPartner() {
+    setError("");
+    setInfo("Recherche d'un nouveau partenaire…");
+
+    try {
+      await desirLeaveQueue();
+    } catch {
+      // ignore
+    }
+
+    setState({ phase: "idle" });
+
+    await sleep(350);
+    await startQueue();
+  }
+
+  async function adminEnd() {
+    setError("");
+    setInfo("");
+
+    try {
+      await desirEndSession();
+      setState({ phase: "idle" });
+      setInfo("Session terminée.");
+    } catch (e: any) {
+      setError(e?.message || "Impossible de terminer la session.");
+    }
+  }
 
   async function startLocalPreview() {
     setError("");
@@ -158,7 +319,9 @@ export default function DesirPage() {
       setLocalStarted(true);
       setInfo("Caméra prête.");
     } catch {
-      setError("Impossible d'accéder à la caméra/micro. Vérifie les permissions du navigateur.");
+      setError(
+        "Impossible d'accéder à la caméra/micro. Vérifie les permissions du navigateur."
+      );
     }
   }
 
@@ -171,7 +334,6 @@ export default function DesirPage() {
     }
 
     setLocalStarted(false);
-    setInfo("Caméra arrêtée.");
   }
 
   function toggleCamera() {
@@ -200,6 +362,76 @@ export default function DesirPage() {
     setSoundEnabled((v) => !v);
   }
 
+  function sendChat() {
+    setError("");
+    const content = chat.trim();
+    if (!content) return;
+
+    const msg: ChatMsg = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      pseudo: profile?.pseudo || "Membre",
+      content,
+      at: new Date().toISOString(),
+      mine: true,
+    };
+
+    setChatMessages((prev) => [...prev, msg].slice(-200));
+    setChat("");
+
+    const { channel } = createSafeChannel(supabase as any, `desir-chat-send-${chatKey}`);
+
+    channel.send({
+      type: "broadcast",
+      event: "chat",
+      payload: msg,
+    });
+
+    try {
+      supabase.removeChannel(channel);
+    } catch {}
+  }
+
+  useEffect(() => {
+    loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loop() {
+      while (alive) {
+        if (state.phase === "queue" || state.phase === "matched") {
+          try {
+            const json = await desirActiveSession();
+            const roomName = pickMaybe(json, ["roomName", "room", "room_name"]);
+            const sessionId = pickMaybe(json, ["sessionId", "session_id", "id"]);
+
+            if (roomName) {
+              setState({
+                phase: "matched",
+                roomName,
+                sessionId,
+              });
+            } else if (state.phase === "matched") {
+              setState({ phase: "queue" });
+            }
+          } catch {
+            // ignore polling errors
+          }
+        }
+
+        await sleep(2000);
+      }
+    }
+
+    loop();
+
+    return () => {
+      alive = false;
+    };
+  }, [state.phase]);
+
   useEffect(() => {
     return () => {
       const stream = localVideoRef.current?.srcObject as MediaStream | null;
@@ -217,25 +449,36 @@ export default function DesirPage() {
   }, [full]);
 
   useEffect(() => {
+    setChatMessages([]);
+    let alive = true;
+
+    const { channel, cleanup } = createSafeChannel(
+      supabase as any,
+      `desir-chat-${chatKey}`
+    );
+
+    channel
+      .on("broadcast", { event: "chat" }, (payload: any) => {
+        if (!alive) return;
+        const msg = payload?.payload as ChatMsg;
+        if (!msg?.id) return;
+
+        setChatMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg].slice(-200);
+        });
+      })
+      .subscribe();
+
+    return () => {
+      alive = false;
+      cleanup();
+    };
+  }, [chatKey]);
+
+  useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages.length]);
-
-  function sendChat() {
-    setError("");
-    const content = chat.trim();
-    if (!content) return;
-
-    const msg: LocalChatMessage = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      pseudo: profile?.pseudo || "Membre",
-      content,
-      createdAt: new Date().toISOString(),
-      mine: true,
-    };
-
-    setChatMessages((prev) => [...prev, msg]);
-    setChat("");
-  }
 
   return (
     <div className="space-y-4">
@@ -313,7 +556,12 @@ export default function DesirPage() {
         {profile && !loading ? (
           <div className="relative mt-3 rounded-[20px] border border-white/10 bg-black/30 p-3">
             <ProfileName profile={profile} size="md" showTitle showBadge />
+
             <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
+                {state.phase.toUpperCase()}
+              </span>
+
               {!localStarted ? (
                 <button
                   onClick={startLocalPreview}
@@ -324,13 +572,46 @@ export default function DesirPage() {
                 </button>
               ) : (
                 <button
-                  onClick={stopLocalPreview}
+                  onClick={() => {
+                    stopLocalPreview();
+                    stopEverything();
+                  }}
                   className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-200 hover:bg-red-500/15"
                 >
                   <Square className="h-4 w-4" />
                   Stop
                 </button>
               )}
+
+              {state.phase !== "idle" ? (
+                <button
+                  onClick={nextPartner}
+                  className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-4 py-2 text-xs font-black text-cyan-200 hover:bg-cyan-500/15"
+                >
+                  <SkipForward className="h-4 w-4" />
+                  Suivant
+                </button>
+              ) : null}
+
+              {state.phase === "matched" ? (
+                <button
+                  onClick={connectMatch}
+                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-xs font-black text-black hover:opacity-95"
+                >
+                  <Play className="h-4 w-4" />
+                  Connect
+                </button>
+              ) : null}
+
+              {state.phase === "idle" ? (
+                <button
+                  onClick={startQueue}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-xs font-black text-white hover:bg-white/15"
+                >
+                  <Play className="h-4 w-4" />
+                  Recherche
+                </button>
+              ) : null}
 
               <button
                 onClick={toggleCamera}
@@ -370,6 +651,16 @@ export default function DesirPage() {
                 {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
                 Son
               </button>
+
+              {isAdmin ? (
+                <button
+                  onClick={adminEnd}
+                  className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-200 hover:bg-red-500/15"
+                >
+                  <Square className="h-4 w-4" />
+                  End
+                </button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -390,15 +681,14 @@ export default function DesirPage() {
       <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
         <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl">
           <div className="mb-3">
-            <div className="text-xs uppercase tracking-[0.22em] text-white/45">Stage</div>
+            <div className="text-xs uppercase tracking-[0.22em] text-white/45">
+              Stage
+            </div>
             <div className="mt-1 text-xl font-black text-white">Cam-to-cam</div>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <VideoCard
-              title="Toi"
-              onFull={() => setFull("me")}
-            >
+            <VideoCard title="Toi" onFull={() => setFull("me")}>
               <div className="aspect-[4/5] xl:aspect-square w-full max-h-[420px] overflow-hidden rounded-[18px] border border-white/10 bg-black/70">
                 <video
                   ref={localVideoRef}
@@ -415,12 +705,15 @@ export default function DesirPage() {
               </div>
             </VideoCard>
 
-            <VideoCard
-              title="Partenaire"
-              onFull={() => setFull("them")}
-            >
+            <VideoCard title="Partenaire" onFull={() => setFull("them")}>
               <div className="grid aspect-[4/5] xl:aspect-square w-full max-h-[420px] place-items-center overflow-hidden rounded-[18px] border border-white/10 bg-black/70 text-white/60">
-                Partenaire à connecter
+                {state.phase === "queue"
+                  ? "Recherche en cours…"
+                  : state.phase === "matched"
+                  ? "Match trouvé. Clique Connect."
+                  : state.phase === "connected"
+                  ? "Partenaire connecté"
+                  : "Partenaire à connecter"}
               </div>
             </VideoCard>
           </div>
@@ -429,7 +722,9 @@ export default function DesirPage() {
         <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-xs uppercase tracking-[0.22em] text-white/45">Chat</div>
+              <div className="text-xs uppercase tracking-[0.22em] text-white/45">
+                Chat
+              </div>
               <div className="mt-1 text-xl font-black text-white">Écrire</div>
             </div>
           </div>
@@ -445,7 +740,10 @@ export default function DesirPage() {
             ) : (
               <div className="space-y-3">
                 {chatMessages.map((m) => (
-                  <div key={m.id} className={cx("flex", m.mine ? "justify-end" : "justify-start")}>
+                  <div
+                    key={m.id}
+                    className={cx("flex", m.mine ? "justify-end" : "justify-start")}
+                  >
                     <div
                       className={cx(
                         "max-w-[88%] rounded-2xl px-4 py-3 text-sm",
@@ -454,10 +752,20 @@ export default function DesirPage() {
                           : "border border-white/10 bg-white/10 text-white"
                       )}
                     >
-                      <div className={cx("mb-1 text-[11px] font-black", m.mine ? "text-black/70" : "text-white/60")}>
+                      <div
+                        className={cx(
+                          "mb-1 text-[11px] font-black",
+                          m.mine ? "text-black/70" : "text-white/60"
+                        )}
+                      >
                         {m.pseudo}
-                        <span className={cx("ml-2 font-normal", m.mine ? "text-black/60" : "text-white/45")}>
-                          {formatTime(m.createdAt)}
+                        <span
+                          className={cx(
+                            "ml-2 font-normal",
+                            m.mine ? "text-black/60" : "text-white/45"
+                          )}
+                        >
+                          {formatTime(m.at)}
                         </span>
                       </div>
                       <div className="whitespace-pre-wrap leading-6">{m.content}</div>
@@ -530,7 +838,10 @@ function FullscreenOverlay({
 }) {
   return (
     <div className="fixed inset-0 z-[80] p-4">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+        onClick={onClose}
+      />
       <div className="relative mx-auto flex h-full w-full max-w-[1100px] flex-col overflow-hidden rounded-[28px] border border-white/10 bg-zinc-950/70 shadow-[0_30px_90px_rgba(0,0,0,0.65)] backdrop-blur-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div className="text-sm font-black text-white/90">{title}</div>

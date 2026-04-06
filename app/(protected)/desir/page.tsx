@@ -1,53 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import {
-  LayoutDashboard,
-  Users,
-  ShoppingBag,
-  Shield,
-  Play,
-  Square,
-  SkipForward,
-  Expand,
-  X,
-  Mic,
-  MicOff,
   Camera,
   CameraOff,
+  Mic,
+  MicOff,
+  Play,
+  RefreshCw,
+  Send,
+  SkipForward,
+  Square,
   Volume2,
   VolumeX,
-  Send,
-  RefreshCw,
 } from "lucide-react";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import ProfileName, { DisplayProfile } from "@/components/ProfileName";
-import { createSafeChannel } from "@/lib/realtime";
+import {
+  LiveKitRoom,
+  GridLayout,
+  ParticipantTile,
+  useTracks,
+} from "@livekit/components-react";
+import { Track } from "livekit-client";
+import "@livekit/components-styles";
 
 const supabase = requireSupabaseBrowserClient();
 
-type ProfileRow = DisplayProfile & {
+type Phase = "idle" | "queue" | "matched" | "connected";
+
+type ChatMessage = {
   id: string;
-  pseudo?: string | null;
-  email?: string | null;
-  is_admin?: boolean | null;
-  role?: string | null;
-};
-
-type DesirPhase = "idle" | "queue" | "matched" | "connected";
-
-type DesirState = {
-  phase: DesirPhase;
-  roomName?: string | null;
-  sessionId?: string | null;
-};
-
-type FullTarget = "me" | "them" | null;
-
-type ChatMsg = {
-  id: string;
-  pseudo: string;
+  author: string;
   content: string;
   at: string;
   mine?: boolean;
@@ -57,260 +40,100 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function pickString(obj: any, keys: string[]) {
-  for (const key of keys) {
-    const value = obj?.[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-}
-
-function pickMaybe(obj: any, keys: string[]) {
-  const s = pickString(obj, keys);
-  return s || null;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function formatTime(value?: string | null) {
+function fmtTime(value?: string | null) {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("fr-CA", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return d.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
+}
+
+function StageConnected() {
+  const tracks = useTracks(
+    [{ source: Track.Source.Camera, withPlaceholder: true }],
+    { onlySubscribed: false }
+  );
+
+  const first = tracks[0];
+  const second = tracks[1];
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-2xl border border-white/10 bg-black/60 p-3">
+        <div className="mb-3 text-sm font-bold text-white/80">Toi</div>
+        <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+          <div className="aspect-[4/5] w-full max-h-[520px]">
+            {first ? (
+              <GridLayout tracks={[first]} style={{ height: "100%" }}>
+                <ParticipantTile />
+              </GridLayout>
+            ) : (
+              <div className="grid h-full place-items-center text-white/50">
+                Cam locale…
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-black/60 p-3">
+        <div className="mb-3 text-sm font-bold text-white/80">Partenaire</div>
+        <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+          <div className="aspect-[4/5] w-full max-h-[520px]">
+            {second ? (
+              <GridLayout tracks={[second]} style={{ height: "100%" }}>
+                <ParticipantTile />
+              </GridLayout>
+            ) : (
+              <div className="grid h-full place-items-center text-white/50">
+                En attente du partenaire…
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function DesirPage() {
-  const router = useRouter();
-
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [error, setError] = useState("");
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [roomName, setRoomName] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [livekitToken, setLivekitToken] = useState<string | null>(null);
+  const [livekitUrl, setLivekitUrl] = useState<string | null>(null);
+
   const [info, setInfo] = useState("");
+  const [error, setError] = useState("");
 
-  const [state, setState] = useState<DesirState>({ phase: "idle" });
-
-  const [localStarted, setLocalStarted] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [camEnabled, setCamEnabled] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  const [full, setFull] = useState<FullTarget>(null);
-
   const [chat, setChat] = useState("");
-  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
-
-  const topButtons = useMemo(
-    () => [
-      {
-        label: "Dashboard",
-        icon: <LayoutDashboard className="h-4 w-4" />,
-        onClick: () => router.push("/dashboard"),
-      },
-      {
-        label: "Salons",
-        icon: <Users className="h-4 w-4" />,
-        onClick: () => router.push("/salons"),
-      },
-      {
-        label: "Boutique",
-        icon: <ShoppingBag className="h-4 w-4" />,
-        onClick: () => router.push("/boutique"),
-      },
-    ],
-    [router]
-  );
-
-  const chatKey = useMemo(() => {
-    if (state.roomName) return `desir:${state.roomName}`;
-    return "desir:lobby";
-  }, [state.roomName]);
-
-  async function loadProfile() {
-    setError("");
-    setLoading(true);
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      router.replace("/enter");
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select(
-        "id, pseudo, email, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
-      )
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (error) {
-      setError(error.message);
-      setProfile(null);
-    } else {
-      setProfile((data as ProfileRow) ?? null);
-    }
-
-    setLoading(false);
-  }
-
-  async function apiJSON(url: string, init?: RequestInit) {
+  async function getAccessToken() {
     const {
       data: { session },
+      error,
     } = await supabase.auth.getSession();
 
-    const accessToken = session?.access_token;
-
-    const res = await fetch(url, {
-      ...init,
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...(init?.headers || {}),
-      },
-    });
-
-    const text = await res.text();
-    let json: any = null;
-
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = { raw: text };
+    if (error || !session?.access_token) {
+      throw new Error("Non authentifié.");
     }
 
-    if (!res.ok) {
-      const msg =
-        pickString(json, ["error", "message"]) || `Erreur API (${res.status})`;
-      throw new Error(msg);
-    }
-
-    return json;
+    return {
+      accessToken: session.access_token,
+      userId: session.user.id,
+    };
   }
 
-  async function desirJoinQueue() {
-    return apiJSON("/api/desir/join", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  }
-
-  async function desirLeaveQueue() {
-    return apiJSON("/api/desir/leave", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  }
-
-  async function desirActiveSession() {
-    return apiJSON("/api/desir/active-session", { method: "GET" });
-  }
-
-  async function desirEndSession() {
-    return apiJSON("/api/desir/end", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  }
-
-  async function startQueue() {
+  async function startCamera() {
     setError("");
-    setInfo("");
-
-    if (!localStarted) {
-      await startLocalPreview();
-    }
-
-    try {
-      const json = await desirJoinQueue();
-
-      const roomName = pickMaybe(json, ["roomName", "room", "room_name"]);
-      const sessionId = pickMaybe(json, ["sessionId", "session_id", "id"]);
-
-      if (roomName) {
-        setState({ phase: "matched", roomName, sessionId });
-        setInfo("Partenaire trouvé. Clique Connect.");
-      } else {
-        setState({ phase: "queue" });
-        setInfo("Recherche en cours…");
-      }
-    } catch (e: any) {
-      setError(e?.message || "Impossible de démarrer la recherche.");
-      setState({ phase: "idle" });
-    }
-  }
-
-  async function connectMatch() {
-    if (!state.roomName) return;
-    setError("");
-    setInfo("Connexion au partenaire…");
-    setState((prev) => ({
-      ...prev,
-      phase: "connected",
-    }));
-  }
-
-  async function stopEverything() {
-    setError("");
-    setInfo("");
-
-    try {
-      await desirLeaveQueue();
-    } catch {
-      // ignore
-    }
-
-    setState({ phase: "idle" });
-    setInfo("Session arrêtée.");
-  }
-
-  async function nextPartner() {
-    setError("");
-    setInfo("Recherche d'un nouveau partenaire…");
-
-    try {
-      await desirLeaveQueue();
-    } catch {
-      // ignore
-    }
-
-    setState({ phase: "idle" });
-    await sleep(500);
-    await startQueue();
-  }
-
-  async function adminEnd() {
-    setError("");
-    setInfo("");
-
-    try {
-      await desirEndSession();
-      setState({ phase: "idle" });
-      setInfo("Session terminée.");
-    } catch (e: any) {
-      setError(e?.message || "Impossible de terminer la session.");
-    }
-  }
-
-  async function startLocalPreview() {
-    setError("");
-    setInfo("");
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -329,16 +152,14 @@ export default function DesirPage() {
         track.enabled = micEnabled;
       });
 
-      setLocalStarted(true);
+      setCameraReady(true);
       setInfo("Caméra prête.");
     } catch {
-      setError(
-        "Impossible d'accéder à la caméra/micro. Vérifie les permissions du navigateur."
-      );
+      setError("Permission caméra refusée.");
     }
   }
 
-  function stopLocalPreview() {
+  function stopCameraOnly() {
     const stream = localVideoRef.current?.srcObject as MediaStream | null;
     stream?.getTracks().forEach((track) => track.stop());
 
@@ -346,28 +167,24 @@ export default function DesirPage() {
       localVideoRef.current.srcObject = null;
     }
 
-    setLocalStarted(false);
+    setCameraReady(false);
   }
 
   function toggleCamera() {
-    const stream = localVideoRef.current?.srcObject as MediaStream | null;
     const next = !camEnabled;
-
+    const stream = localVideoRef.current?.srcObject as MediaStream | null;
     stream?.getVideoTracks().forEach((track) => {
       track.enabled = next;
     });
-
     setCamEnabled(next);
   }
 
   function toggleMic() {
-    const stream = localVideoRef.current?.srcObject as MediaStream | null;
     const next = !micEnabled;
-
+    const stream = localVideoRef.current?.srcObject as MediaStream | null;
     stream?.getAudioTracks().forEach((track) => {
       track.enabled = next;
     });
-
     setMicEnabled(next);
   }
 
@@ -375,399 +192,364 @@ export default function DesirPage() {
     setSoundEnabled((v) => !v);
   }
 
-  function sendChat() {
+  async function startSearch() {
     setError("");
-    const content = chat.trim();
-    if (!content) return;
-
-    const msg: ChatMsg = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      pseudo: profile?.pseudo || "Membre",
-      content,
-      at: new Date().toISOString(),
-      mine: true,
-    };
-
-    setChatMessages((prev) => [...prev, msg].slice(-200));
-    setChat("");
-
-    const { channel } = createSafeChannel(
-      supabase as any,
-      `desir-chat-send-${chatKey}`
-    );
-
-    channel.send({
-      type: "broadcast",
-      event: "chat",
-      payload: msg,
-    });
+    setInfo("Recherche en cours...");
+    setLivekitToken(null);
+    setLivekitUrl(null);
+    setRoomName(null);
+    setSessionId(null);
 
     try {
-      supabase.removeChannel(channel);
-    } catch {}
+      if (!cameraReady) {
+        await startCamera();
+      }
+
+      const { accessToken } = await getAccessToken();
+
+      const res = await fetch("/api/desir/join", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Erreur join");
+      }
+
+      setPhase("queue");
+      setInfo("Recherche en cours...");
+    } catch (e: any) {
+      setPhase("idle");
+      setError(e?.message || "Impossible de lancer la recherche.");
+    }
+  }
+
+  async function leave() {
+    setError("");
+
+    try {
+      const { accessToken } = await getAccessToken();
+
+      await fetch("/api/desir/leave", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+    } catch {
+      // ignore
+    }
+
+    setPhase("idle");
+    setRoomName(null);
+    setSessionId(null);
+    setLivekitToken(null);
+    setLivekitUrl(null);
+    setInfo("");
+  }
+
+  async function nextPartner() {
+    setError("");
+    setInfo("Recherche d'un nouveau partenaire...");
+
+    await leave();
+    await new Promise((r) => setTimeout(r, 500));
+    await startSearch();
+  }
+
+  async function connect() {
+    setError("");
+    setInfo("Connexion au partenaire...");
+
+    try {
+      if (!roomName) {
+        throw new Error("roomName manquant.");
+      }
+
+      const { accessToken, userId } = await getAccessToken();
+
+      const res = await fetch("/api/livekit/token", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          room: roomName,
+          identity: userId,
+          sessionId,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Erreur token LiveKit");
+      }
+
+      if (!json.token || !json.url) {
+        throw new Error("Token ou URL LiveKit manquant.");
+      }
+
+      setLivekitToken(json.token);
+      setLivekitUrl(json.url);
+      setPhase("connected");
+      setInfo("Connecté 🔥");
+    } catch (e: any) {
+      setError(e?.message || "Connexion impossible.");
+    }
   }
 
   useEffect(() => {
-    loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let active = true;
 
-  useEffect(() => {
-    let alive = true;
+    async function poll() {
+      while (active && phase === "queue") {
+        try {
+          const { accessToken } = await getAccessToken();
 
-    async function loop() {
-      while (alive) {
-        if (state.phase === "queue" || state.phase === "matched") {
-          try {
-            const json = await desirActiveSession();
-            const roomName = pickMaybe(json, ["roomName", "room", "room_name"]);
-            const sessionId = pickMaybe(json, ["sessionId", "session_id", "id"]);
+          const res = await fetch("/api/desir/active-session", {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          });
 
-            if (roomName) {
-              setState({
-                phase: "matched",
-                roomName,
-                sessionId,
-              });
-            } else if (state.phase === "matched") {
-              setState({ phase: "queue" });
-            }
-          } catch {
-            // ignore polling errors
+          const json = await res.json();
+          const s = json?.session;
+
+          if (s?.id) {
+            setSessionId(String(s.id));
+            setRoomName(s.room_name || `desir-${s.id}`);
+            setPhase("matched");
+            setInfo("🔥 Partenaire trouvé !");
+            break;
           }
+        } catch {
+          // ignore
         }
 
-        await sleep(2000);
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
 
-    loop();
+    if (phase === "queue") {
+      poll();
+    }
 
     return () => {
-      alive = false;
+      active = false;
     };
-  }, [state.phase]);
-
-  useEffect(() => {
-    return () => {
-      const stream = localVideoRef.current?.srcObject as MediaStream | null;
-      stream?.getTracks().forEach((track) => track.stop());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!full) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [full]);
-
-  useEffect(() => {
-    setChatMessages([]);
-    let alive = true;
-
-    const { channel, cleanup } = createSafeChannel(
-      supabase as any,
-      `desir-chat-${chatKey}`
-    );
-
-    channel
-      .on("broadcast", { event: "chat" }, (payload: any) => {
-        if (!alive) return;
-        const msg = payload?.payload as ChatMsg;
-        if (!msg?.id) return;
-
-        setChatMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg].slice(-200);
-        });
-      })
-      .subscribe();
-
-    return () => {
-      alive = false;
-      cleanup();
-    };
-  }, [chatKey]);
+  }, [phase]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages.length]);
 
+  useEffect(() => {
+    return () => {
+      stopCameraOnly();
+    };
+  }, []);
+
+  function sendChat() {
+    setError("");
+    const content = chat.trim();
+    if (!content) return;
+
+    const msg: ChatMessage = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      author: "Toi",
+      content,
+      at: new Date().toISOString(),
+      mine: true,
+    };
+
+    setChatMessages((prev) => [...prev, msg]);
+    setChat("");
+  }
+
   return (
-    <div className="space-y-4">
-      {full ? (
-        <FullscreenOverlay
-          title={full === "me" ? "Ta caméra" : "Partenaire"}
-          onClose={() => setFull(null)}
-        >
-          {full === "me" ? (
-            <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black">
-              <div className="aspect-[4/5] w-full max-h-[80vh]">
-                <video
-                  autoPlay
-                  muted
-                  playsInline
-                  className="h-full w-full object-contain"
-                  ref={(node) => {
-                    if (!node) return;
-                    const stream = localVideoRef.current?.srcObject as MediaStream | null;
-                    if (stream && node.srcObject !== stream) {
-                      node.srcObject = stream;
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="grid place-items-center rounded-[22px] border border-white/10 bg-black/70 py-24 text-white/65">
-              Partenaire à connecter
-            </div>
-          )}
-        </FullscreenOverlay>
-      ) : null}
-
-      <section className="relative overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.10),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.08),transparent_36%)]" />
-
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-[18px] border border-white/10 bg-white/5 text-2xl">
-              💎
-            </div>
-            <div>
-              <div className="text-xs uppercase tracking-[0.28em] text-white/45">
-                EtherCristal
-              </div>
-              <h1 className="text-2xl font-black text-white">Désir Intense</h1>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {topButtons.map((btn) => (
-              <button
-                key={btn.label}
-                onClick={btn.onClick}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/10"
-              >
-                {btn.icon}
-                {btn.label}
-              </button>
-            ))}
-
-            {isAdmin ? (
-              <button
-                onClick={() => router.push("/admin")}
-                className="inline-flex items-center gap-2 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-2.5 text-sm font-black text-violet-200 hover:bg-violet-500/15"
-              >
-                <Shield className="h-4 w-4" />
-                Admin
-              </button>
-            ) : null}
-
-            <button
-              onClick={loadProfile}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/10"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </button>
-          </div>
-        </div>
-
-        {profile && !loading ? (
-          <div className="relative mt-3 rounded-[20px] border border-white/10 bg-black/30 p-3">
-            <ProfileName profile={profile} size="md" showTitle showBadge />
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                {state.phase.toUpperCase()}
-              </span>
-
-              {!localStarted ? (
-                <button
-                  onClick={startLocalPreview}
-                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-xs font-black text-black hover:opacity-95"
-                >
-                  <Play className="h-4 w-4" />
-                  Démarrer
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    stopLocalPreview();
-                    stopEverything();
-                  }}
-                  className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-200 hover:bg-red-500/15"
-                >
-                  <Square className="h-4 w-4" />
-                  Stop
-                </button>
-              )}
-
-              {state.phase !== "idle" ? (
-                <button
-                  onClick={nextPartner}
-                  className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-500/10 px-4 py-2 text-xs font-black text-cyan-200 hover:bg-cyan-500/15"
-                >
-                  <SkipForward className="h-4 w-4" />
-                  Suivant
-                </button>
-              ) : null}
-
-              {state.phase === "matched" ? (
-                <button
-                  onClick={connectMatch}
-                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-xs font-black text-black hover:opacity-95"
-                >
-                  <Play className="h-4 w-4" />
-                  Connect
-                </button>
-              ) : null}
-
-              {state.phase === "idle" ? (
-                <button
-                  onClick={startQueue}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-xs font-black text-white hover:bg-white/15"
-                >
-                  <Play className="h-4 w-4" />
-                  Recherche
-                </button>
-              ) : null}
-
-              <button
-                onClick={toggleCamera}
-                className={cx(
-                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black transition",
-                  camEnabled
-                    ? "border border-white/10 bg-white/10 text-white hover:bg-white/15"
-                    : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
-                )}
-              >
-                {camEnabled ? (
-                  <Camera className="h-4 w-4" />
-                ) : (
-                  <CameraOff className="h-4 w-4" />
-                )}
-                Cam
-              </button>
-
-              <button
-                onClick={toggleMic}
-                className={cx(
-                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black transition",
-                  micEnabled
-                    ? "border border-white/10 bg-white/10 text-white hover:bg-white/15"
-                    : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
-                )}
-              >
-                {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-                Mic
-              </button>
-
-              <button
-                onClick={toggleSound}
-                className={cx(
-                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black transition",
-                  soundEnabled
-                    ? "border border-white/10 bg-white/10 text-white hover:bg-white/15"
-                    : "border border-red-400/20 bg-red-500/10 text-red-200 hover:bg-red-500/15"
-                )}
-              >
-                {soundEnabled ? (
-                  <Volume2 className="h-4 w-4" />
-                ) : (
-                  <VolumeX className="h-4 w-4" />
-                )}
-                Son
-              </button>
-
-              {isAdmin ? (
-                <button
-                  onClick={adminEnd}
-                  className="inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-200 hover:bg-red-500/15"
-                >
-                  <Square className="h-4 w-4" />
-                  End
-                </button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-      </section>
+    <div className="space-y-6 p-6">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-6">
+        <h1 className="text-3xl font-black text-white">Désir Intense</h1>
+        <p className="mt-2 text-sm text-white/55">
+          Cam-to-cam stable avec match puis connexion LiveKit.
+        </p>
+      </div>
 
       {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-red-300">
           {error}
         </div>
       ) : null}
 
       {info ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-emerald-300">
           {info}
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-        <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-          <div className="mb-3">
-            <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-              Stage
-            </div>
-            <div className="mt-1 text-xl font-black text-white">Cam-to-cam</div>
+      <div className="flex flex-wrap gap-3">
+        {phase === "idle" ? (
+          <>
+            <button
+              onClick={startCamera}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white"
+            >
+              <Camera className="h-4 w-4" />
+              Caméra
+            </button>
+
+            <button
+              onClick={startSearch}
+              className="inline-flex items-center gap-2 rounded-xl bg-pink-600 px-4 py-2 font-semibold text-white"
+            >
+              <Play className="h-4 w-4" />
+              Recherche
+            </button>
+          </>
+        ) : null}
+
+        {phase === "matched" ? (
+          <button
+            onClick={connect}
+            className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-4 py-2 font-semibold text-white"
+          >
+            <Play className="h-4 w-4" />
+            Connect
+          </button>
+        ) : null}
+
+        {(phase === "queue" || phase === "matched" || phase === "connected") ? (
+          <>
+            <button
+              onClick={nextPartner}
+              className="inline-flex items-center gap-2 rounded-xl bg-yellow-600 px-4 py-2 font-semibold text-white"
+            >
+              <SkipForward className="h-4 w-4" />
+              Suivant
+            </button>
+
+            <button
+              onClick={leave}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 font-semibold text-white"
+            >
+              <Square className="h-4 w-4" />
+              Stop
+            </button>
+          </>
+        ) : null}
+
+        <button
+          onClick={toggleCamera}
+          className={cx(
+            "inline-flex items-center gap-2 rounded-xl px-4 py-2 font-semibold text-white",
+            camEnabled ? "bg-zinc-700" : "bg-red-700"
+          )}
+        >
+          {camEnabled ? <Camera className="h-4 w-4" /> : <CameraOff className="h-4 w-4" />}
+          Cam
+        </button>
+
+        <button
+          onClick={toggleMic}
+          className={cx(
+            "inline-flex items-center gap-2 rounded-xl px-4 py-2 font-semibold text-white",
+            micEnabled ? "bg-zinc-700" : "bg-red-700"
+          )}
+        >
+          {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+          Mic
+        </button>
+
+        <button
+          onClick={toggleSound}
+          className={cx(
+            "inline-flex items-center gap-2 rounded-xl px-4 py-2 font-semibold text-white",
+            soundEnabled ? "bg-zinc-700" : "bg-red-700"
+          )}
+        >
+          {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          Son
+        </button>
+
+        <button
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center gap-2 rounded-xl bg-zinc-700 px-4 py-2 font-semibold text-white"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </button>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-4 text-sm uppercase tracking-wide text-white/45">
+            Stage
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <VideoCard title="Toi" onFull={() => setFull("me")}>
-              <div className="aspect-[4/5] xl:aspect-square w-full max-h-[420px] overflow-hidden rounded-[18px] border border-white/10 bg-black/70">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="h-full w-full object-cover"
-                />
-                {!localStarted ? (
-                  <div className="grid h-full place-items-center text-white/60">
-                    Clique “Démarrer”
+          {phase === "connected" && livekitToken && livekitUrl ? (
+            <LiveKitRoom
+              token={livekitToken}
+              serverUrl={livekitUrl}
+              connect={true}
+              audio={true}
+              video={true}
+              data-lk-theme="default"
+              style={{ width: "100%" }}
+            >
+              <StageConnected />
+            </LiveKitRoom>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-black/60 p-3">
+                <div className="mb-3 text-sm font-bold text-white/80">Toi</div>
+                <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+                  <div className="aspect-[4/5] w-full max-h-[520px]">
+                    <video
+                      ref={localVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="h-full w-full object-cover"
+                    />
+                    {!cameraReady ? (
+                      <div className="grid h-full place-items-center text-white/50">
+                        Clique « Caméra »
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-              </div>
-            </VideoCard>
-
-            <VideoCard title="Partenaire" onFull={() => setFull("them")}>
-              <div className="grid aspect-[4/5] xl:aspect-square w-full max-h-[420px] place-items-center overflow-hidden rounded-[18px] border border-white/10 bg-black/70 text-white/60">
-                {state.phase === "queue"
-                  ? "Recherche en cours…"
-                  : state.phase === "matched"
-                  ? "Match trouvé. Clique Connect."
-                  : state.phase === "connected"
-                  ? "Partenaire connecté"
-                  : "Partenaire à connecter"}
-              </div>
-            </VideoCard>
-          </div>
-        </section>
-
-        <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4 shadow-[0_16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-                Chat
-              </div>
-              <div className="mt-1 text-xl font-black text-white">Écrire</div>
-            </div>
-          </div>
-
-          <div className="mt-4 h-[300px] xl:h-[420px] overflow-auto rounded-2xl border border-white/10 bg-black/20 p-4">
-            {chatMessages.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-center">
-                <div>
-                  <div className="text-sm font-black text-white">Aucun message</div>
-                  <div className="mt-2 text-xs text-white/55">Écris ici.</div>
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/60 p-3">
+                <div className="mb-3 text-sm font-bold text-white/80">Partenaire</div>
+                <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+                  <div className="grid aspect-[4/5] w-full max-h-[520px] place-items-center text-white/50">
+                    {phase === "idle" && "Clique Recherche"}
+                    {phase === "queue" && "Recherche..."}
+                    {phase === "matched" && "Clique Connect"}
+                    {phase === "connected" && "Connecté"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div className="mb-4 text-sm uppercase tracking-wide text-white/45">
+            Chat
+          </div>
+
+          <div className="h-[320px] overflow-auto rounded-xl border border-white/10 bg-black/30 p-4">
+            {chatMessages.length === 0 ? (
+              <div className="grid h-full place-items-center text-white/50">
+                Aucun message
               </div>
             ) : (
               <div className="space-y-3">
@@ -780,29 +562,17 @@ export default function DesirPage() {
                       className={cx(
                         "max-w-[88%] rounded-2xl px-4 py-3 text-sm",
                         m.mine
-                          ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
+                          ? "bg-gradient-to-r from-pink-600 to-amber-300 text-black"
                           : "border border-white/10 bg-white/10 text-white"
                       )}
                     >
-                      <div
-                        className={cx(
-                          "mb-1 text-[11px] font-black",
-                          m.mine ? "text-black/70" : "text-white/60"
-                        )}
-                      >
-                        {m.pseudo}
-                        <span
-                          className={cx(
-                            "ml-2 font-normal",
-                            m.mine ? "text-black/60" : "text-white/45"
-                          )}
-                        >
-                          {formatTime(m.at)}
+                      <div className="mb-1 text-[11px] font-bold">
+                        {m.author}
+                        <span className="ml-2 font-normal opacity-70">
+                          {fmtTime(m.at)}
                         </span>
                       </div>
-                      <div className="whitespace-pre-wrap leading-6">
-                        {m.content}
-                      </div>
+                      <div className="whitespace-pre-wrap">{m.content}</div>
                     </div>
                   </div>
                 ))}
@@ -815,79 +585,18 @@ export default function DesirPage() {
             <textarea
               value={chat}
               onChange={(e) => setChat(e.target.value)}
-              placeholder="Écris ici…"
-              className="min-h-[66px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
-              onKeyDown={(e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") sendChat();
-              }}
+              placeholder="Écris ici..."
+              className="min-h-[66px] flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none"
             />
             <button
               onClick={sendChat}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3 text-sm font-black text-black hover:opacity-95"
+              className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-pink-600 to-amber-300 px-5 py-3 font-bold text-black"
             >
               <Send className="h-4 w-4" />
               Envoyer
             </button>
           </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function VideoCard({
-  title,
-  onFull,
-  children,
-}: {
-  title: string;
-  onFull: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-[20px] border border-white/10 bg-black/40 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-sm font-black text-white/85">{title}</div>
-        <button
-          onClick={onFull}
-          className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-white/80 hover:bg-white/10"
-        >
-          <Expand className="h-4 w-4" />
-          Plein écran
-        </button>
-      </div>
-      <div className="mt-3">{children}</div>
-    </div>
-  );
-}
-
-function FullscreenOverlay({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-[80] p-4">
-      <div
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <div className="relative mx-auto flex h-full w-full max-w-[1100px] flex-col overflow-hidden rounded-[28px] border border-white/10 bg-zinc-950/70 shadow-[0_30px_90px_rgba(0,0,0,0.65)] backdrop-blur-2xl">
-        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-          <div className="text-sm font-black text-white/90">{title}</div>
-          <button
-            onClick={onClose}
-            className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
-            aria-label="Close fullscreen"
-          >
-            <X className="h-4 w-4 text-white/80" />
-          </button>
         </div>
-        <div className="flex-1 overflow-auto p-4">{children}</div>
       </div>
     </div>
   );

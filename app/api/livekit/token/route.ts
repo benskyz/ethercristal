@@ -1,55 +1,55 @@
-import { NextResponse } from "next/server";
-import { AccessToken } from "livekit-server-sdk";
+import { NextRequest, NextResponse } from "next/server";
+import { AccessToken, VideoGrant } from "livekit-server-sdk";
+import { ensureRoomExists } from "@/lib/livekit-admin";
 
-// Token endpoint sécurisé.
-// Donne publish uniquement si role=participant.
-// Spectator = subscribe-only (pas de publish cam/mic).
-
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const roomId = String(body?.roomId || "");
-    const identity = String(body?.identity || "");
-    const name = String(body?.name || "Membre");
-    const role = (body?.role === "participant" ? "participant" : "spectator") as "participant" | "spectator";
+    const body = await req.json();
+    const room = body?.room;
+    const identity = body?.identity || `guest-${Math.random().toString(36).slice(2, 8)}`;
 
-    if (!roomId || !identity) {
-      return NextResponse.json({ error: "missing roomId/identity" }, { status: 400 });
+    if (!room) {
+      return NextResponse.json({ error: "room missing" }, { status: 400 });
     }
 
-    const url = process.env.LIVEKIT_URL;
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
+    const apiKey = process.env.LIVEKIT_API_KEY!;
+    const apiSecret = process.env.LIVEKIT_API_SECRET!;
+    const livekitUrl =
+      process.env.NEXT_PUBLIC_LIVEKIT_URL ||
+      process.env.LIVEKIT_URL!;
 
-    if (!url || !apiKey || !apiSecret) {
-      return NextResponse.json({ error: "LiveKit env missing" }, { status: 500 });
+    if (!apiKey || !apiSecret || !livekitUrl) {
+      return NextResponse.json(
+        { error: "LiveKit config missing" },
+        { status: 500 }
+      );
     }
 
-    // Permissions
-    const canPublish = role === "participant";
+    // 🔥 ensure room exists automatically
+    await ensureRoomExists(room);
 
-    const at = new AccessToken(apiKey, apiSecret, {
-      identity, // user.id
-      name,     // affichage
-      ttl: 60 * 60, // 1h
-    });
+    const at = new AccessToken(apiKey, apiSecret, { identity });
 
-    at.addGrant({
-      room: roomId,
+    const grant = new VideoGrant({
+      room,
       roomJoin: true,
-      canPublish,
+      canPublish: true,
       canSubscribe: true,
-      canPublishData: canPublish, // data messages seulement participants (tu peux le mettre true si tu veux)
     });
 
-    const token = await at.toJwt();
+    at.addGrant(grant);
+
+    const token = at.toJwt();
 
     return NextResponse.json({
       token,
-      url,
-      role,
+      url: livekitUrl,
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "token error" }, { status: 500 });
+    console.error("LiveKit token error:", e);
+    return NextResponse.json(
+      { error: e?.message || "Token generation failed" },
+      { status: 500 }
+    );
   }
 }

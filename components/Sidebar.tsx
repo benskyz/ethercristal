@@ -80,7 +80,12 @@ export default function Sidebar({
     return items;
   }, [isAdmin]);
 
-  async function loadProfile() {
+  async function loadProfile(opts?: { silent?: boolean }) {
+    const silent = Boolean(opts?.silent);
+
+    if (!silent) {
+      setLoading(true);
+    }
     setError("");
 
     const {
@@ -113,27 +118,23 @@ export default function Sidebar({
 
   async function refresh() {
     setRefreshing(true);
-    await loadProfile();
+    await loadProfile({ silent: true });
     setRefreshing(false);
   }
 
+  // initial load
   useEffect(() => {
     loadProfile();
-
-    const channel = supabase
-      .channel("sidebar-profile")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "profiles" },
-        () => loadProfile()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // reload small (silent) on route change so UI stays up-to-date without realtime headaches
+  useEffect(() => {
+    // if sidebar already has profile, do silent refresh on nav
+    if (!profile) return;
+    loadProfile({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -225,7 +226,8 @@ export default function Sidebar({
         {/* Nav */}
         <nav className={cx("mt-5 space-y-2", variant === "desktop" ? "flex-1" : "")}>
           {NAV.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(item.href + "/");
+            const active =
+              pathname === item.href || pathname.startsWith(item.href + "/");
             const Icon = item.icon;
 
             return (
@@ -256,7 +258,7 @@ export default function Sidebar({
         </nav>
 
         {/* Footer */}
-        <div className={cx("mt-4", variant === "desktop" ? "" : "pt-2")}>
+        <div className="mt-4">
           <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
             <button
               onClick={signOut}

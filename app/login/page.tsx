@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-
-export default function LoginPage() {
-  redirect("/enter");
+export default function Login() {
+  redirect("/enter?mode=login");
 }

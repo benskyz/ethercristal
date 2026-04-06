@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-
-export default function RegisterPage() {
-  redirect("/enter");
+export default function Register() {
+  redirect("/enter?mode=register");
 }

@@ -1,437 +1,351 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Mail, Lock, User, Eye, EyeOff, ArrowRight, ShieldCheck } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
 const supabase = requireSupabaseBrowserClient();
 
-type Mode = "login" | "register";
+function cx(...c: Array<string | false | null | undefined>) {
+  return c.filter(Boolean).join(" ");
+}
 
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+function passwordScore(pw: string) {
+  const s = pw.trim();
+  let score = 0;
+  if (s.length >= 8) score++;
+  if (/[A-Z]/.test(s)) score++;
+  if (/[a-z]/.test(s)) score++;
+  if (/[0-9]/.test(s)) score++;
+  if (/[^A-Za-z0-9]/.test(s)) score++;
+  return Math.min(score, 5);
 }
 
 export default function EnterPage() {
-  const [mode, setMode] = useState<Mode>("login");
-  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const params = useSearchParams();
+
+  const [mode, setMode] = useState<"login" | "register">("login");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
   const [pseudo, setPseudo] = useState("");
-  const [ageConfirmed, setAgeConfirmed] = useState(false);
 
-  const [message, setMessage] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanPseudo = pseudo.trim();
+  // si déjà connecté → dashboard
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) router.replace("/dashboard");
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const passwordStrength = useMemo(() => {
-    let score = 0;
-    if (password.length >= 8) score++;
-    if (/[A-Z]/.test(password)) score++;
-    if (/[0-9]/.test(password)) score++;
-    if (/[^A-Za-z0-9]/.test(password)) score++;
+  // switch login/register si url le suggère
+  useEffect(() => {
+    const m = params?.get("mode");
+    if (m === "register") setMode("register");
+    if (m === "login") setMode("login");
+  }, [params]);
 
-    if (score <= 1) return "faible";
-    if (score <= 3) return "moyen";
-    return "fort";
-  }, [password]);
+  const pwScore = useMemo(() => passwordScore(password), [password]);
 
-  function switchMode(next: Mode) {
-    if (loading) return;
-    setMode(next);
+  const pwLabel = useMemo(() => {
+    if (!password.trim()) return "—";
+    if (pwScore <= 1) return "Faible";
+    if (pwScore === 2) return "Moyen";
+    if (pwScore === 3) return "Bon";
+    if (pwScore === 4) return "Très bon";
+    return "Fort";
+  }, [pwScore, password]);
+
+  const emailRedirectTo = useMemo(() => {
+    // prod: tu veux absolument ethercristal.site
+    // local: ok aussi si tu testes en local
+    const origin =
+      typeof window !== "undefined" ? window.location.origin : "https://www.ethercristal.site";
+    const prod = "https://www.ethercristal.site";
+    const base = origin.includes("localhost") || origin.includes("127.0.0.1") ? origin : prod;
+    return `${base}/login?confirm=1&next=/dashboard`;
+  }, []);
+
+  async function onSubmit() {
     setError("");
-    setMessage("");
-  }
+    setInfo("");
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    if (loading) return;
+    const e = email.trim();
+    const p = password;
 
-    setLoading(true);
-    setMessage("");
-    setError("");
-
-    try {
-      if (!cleanEmail) {
-        throw new Error("L’email est requis.");
-      }
-
-      if (!isValidEmail(cleanEmail)) {
-        throw new Error("Entre une adresse email valide.");
-      }
-
-      if (!password) {
-        throw new Error("Le mot de passe est requis.");
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      window.location.href = "/dashboard";
+    if (!isValidEmail(e)) {
+      setError("Entre un email valide.");
       return;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Connexion impossible.");
-    } finally {
-      setLoading(false);
     }
-  }
 
-  async function handleRegister(e: React.FormEvent) {
-    e.preventDefault();
-    if (loading) return;
+    if (mode === "register") {
+      const ps = pseudo.trim();
+      if (ps.length < 3) {
+        setError("Ton pseudo doit faire au moins 3 caractères.");
+        return;
+      }
+      if (p.trim().length < 8) {
+        setError("Mot de passe trop court (min 8).");
+        return;
+      }
+    }
 
     setLoading(true);
-    setMessage("");
-    setError("");
-
     try {
-      if (!ageConfirmed) {
-        throw new Error("Tu dois confirmer que tu as 18 ans ou plus.");
+      if (mode === "login") {
+        const { error: signInErr } = await supabase.auth.signInWithPassword({
+          email: e,
+          password: p,
+        });
+        if (signInErr) throw signInErr;
+
+        router.replace("/dashboard");
+        return;
       }
 
-      if (!cleanPseudo) {
-        throw new Error("Le pseudo est requis.");
-      }
-
-      if (cleanPseudo.length < 3) {
-        throw new Error("Le pseudo doit contenir au moins 3 caractères.");
-      }
-
-      if (cleanPseudo.length > 24) {
-        throw new Error("Le pseudo est trop long.");
-      }
-
-      if (!cleanEmail) {
-        throw new Error("L’email est requis.");
-      }
-
-      if (!isValidEmail(cleanEmail)) {
-        throw new Error("Entre une adresse email valide.");
-      }
-
-      if (password.length < 8) {
-        throw new Error("Le mot de passe doit contenir au moins 8 caractères.");
-      }
-
-      if (password !== confirmPassword) {
-        throw new Error("Les mots de passe ne correspondent pas.");
-      }
-
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password,
+      // register
+      const { data, error: signUpErr } = await supabase.auth.signUp({
+        email: e,
+        password: p,
         options: {
-          emailRedirectTo:
-            typeof window !== "undefined"
-              ? `${window.location.origin}/dashboard`
-              : undefined,
+          emailRedirectTo,
           data: {
-            pseudo: cleanPseudo,
+            pseudo: pseudo.trim(),
             is_18_plus: true,
           },
         },
       });
 
-      if (error) {
-        throw new Error(error.message);
-      }
+      if (signUpErr) throw signUpErr;
 
-      const userId = data.user?.id;
-
-      if (userId) {
-        const { error: profileError } = await supabase.from("profiles").upsert({
-          id: userId,
-          pseudo: cleanPseudo,
-          email: cleanEmail,
+      // Optionnel: si ton projet crée un row profiles via trigger, ok.
+      // Sinon, on essaie d'upsert (ne casse pas si RLS bloque).
+      if (data?.user?.id) {
+        await supabase.from("profiles").upsert({
+          id: data.user.id,
+          pseudo: pseudo.trim(),
+          email: e,
           credits: 0,
           is_vip: false,
           is_admin: false,
-          role: "member",
+          role: "user",
         });
-
-        if (profileError) {
-          throw new Error(profileError.message);
-        }
       }
 
-      setMessage(
-        "Compte créé. Vérifie ton email si la confirmation est activée, puis connecte-toi."
-      );
-
+      setInfo("Compte créé. Vérifie ton email pour confirmer ✅");
       setMode("login");
       setPassword("");
-      setConfirmPassword("");
-      setAgeConfirmed(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Inscription impossible.");
+    } catch (err: any) {
+      setError(err?.message || "Erreur. Réessaie.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-black text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(120,0,30,0.35),transparent_32%),radial-gradient(circle_at_70%_30%,rgba(255,180,70,0.15),transparent_24%),linear-gradient(to_bottom,#040404,#07070b_40%,#020202)]" />
-      <div className="absolute inset-0 opacity-[0.06] [background-image:linear-gradient(rgba(255,255,255,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.08)_1px,transparent_1px)] [background-size:32px_32px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,.22)_55%,rgba(0,0,0,.72)_100%)]" />
+    <div className="min-h-[calc(100vh-0px)] bg-[#07070a] text-white">
+      {/* background premium */}
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
+        <div className="absolute -left-24 top-24 h-64 w-64 rounded-full bg-rose-500/10 blur-3xl" />
+        <div className="absolute -right-24 bottom-16 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+      </div>
 
-      <div className="relative mx-auto flex min-h-screen max-w-7xl items-center px-4 py-10 sm:px-6 lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:gap-10 lg:px-8">
-        <section className="hidden lg:block">
-          <div className="max-w-2xl">
-            <div className="inline-flex rounded-full border border-amber-300/15 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-amber-100/80 backdrop-blur">
-              Accès privé réservé aux adultes
+      <div className="mx-auto flex min-h-screen max-w-[1240px] items-center justify-center px-4 py-10">
+        <div className="w-full max-w-md">
+          {/* Header */}
+          <div className="mb-6 text-center">
+            <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-[22px] border border-white/10 bg-white/5 shadow-[0_18px_55px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
+              <ShieldCheck className="h-6 w-6 text-white/85" />
             </div>
-
-            <div className="mt-8">
-              <div className="mb-4 text-6xl font-black tracking-tight">
-                <span className="bg-gradient-to-r from-rose-500 via-amber-300 to-white bg-clip-text text-transparent">
-                  EtherCristal
-                </span>
-              </div>
-
-              <h1 className="max-w-xl text-5xl font-black leading-[1.02] text-white">
-                Une entrée plus élégante. Plus mature. Plus nette.
-              </h1>
-
-              <p className="mt-6 max-w-xl text-lg leading-8 text-white/68">
-                Un seul portail, une seule identité visuelle, et un accès direct à ton univers
-                privé après authentification.
-              </p>
+            <div className="text-xs uppercase tracking-[0.26em] text-white/45">
+              Accès réservé 18+
             </div>
-
-            <div className="mt-10 grid max-w-2xl grid-cols-3 gap-4">
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl">
-                <p className="text-xs uppercase tracking-[0.25em] text-white/40">Accès</p>
-                <p className="mt-3 text-base font-bold text-white/92">Connexion requise</p>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl">
-                <p className="text-xs uppercase tracking-[0.25em] text-white/40">Cadre</p>
-                <p className="mt-3 text-base font-bold text-white/92">Privé • 18+ • Premium</p>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl">
-                <p className="text-xs uppercase tracking-[0.25em] text-white/40">Après</p>
-                <p className="mt-3 text-base font-bold text-white/92">Dashboard</p>
-              </div>
-            </div>
+            <h1 className="mt-2 text-3xl font-black tracking-tight">Espace privé</h1>
+            <p className="mt-2 text-sm text-white/60">
+              Connexion rapide. Style premium. Zéro débordement.
+            </p>
           </div>
-        </section>
 
-        <section className="w-full">
-          <div className="mx-auto w-full max-w-xl rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,16,20,.94),rgba(8,8,12,.98))] p-5 shadow-[0_25px_80px_rgba(0,0,0,.65)] backdrop-blur-2xl sm:p-7">
-            <div className="mb-6 lg:hidden">
-              <div className="text-center">
-                <div className="text-4xl font-black tracking-tight">
-                  <span className="bg-gradient-to-r from-rose-500 via-amber-300 to-white bg-clip-text text-transparent">
-                    EtherCristal
-                  </span>
-                </div>
-                <p className="mt-2 text-sm text-white/55">
-                  Accès privé • 18+ • réservé aux membres
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/5 p-1">
+          {/* Card */}
+          <div className="rounded-[32px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-6">
+            {/* Mode switch */}
+            <div className="grid grid-cols-2 rounded-2xl border border-white/10 bg-black/25 p-1">
               <button
-                type="button"
-                onClick={() => switchMode("login")}
-                disabled={loading}
-                className={`rounded-2xl px-4 py-3 text-sm font-bold transition ${
-                  mode === "login"
-                    ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
-                    : "text-white/70 hover:bg-white/5"
-                } ${loading ? "opacity-70" : ""}`}
+                onClick={() => setMode("login")}
+                className={cx(
+                  "rounded-xl px-4 py-2 text-sm font-black transition",
+                  mode === "login" ? "bg-white/10 text-white" : "text-white/60 hover:text-white"
+                )}
               >
                 Connexion
               </button>
-
               <button
-                type="button"
-                onClick={() => switchMode("register")}
-                disabled={loading}
-                className={`rounded-2xl px-4 py-3 text-sm font-bold transition ${
-                  mode === "register"
-                    ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
-                    : "text-white/70 hover:bg-white/5"
-                } ${loading ? "opacity-70" : ""}`}
+                onClick={() => setMode("register")}
+                className={cx(
+                  "rounded-xl px-4 py-2 text-sm font-black transition",
+                  mode === "register" ? "bg-white/10 text-white" : "text-white/60 hover:text-white"
+                )}
               >
                 Inscription
               </button>
             </div>
 
-            <div className="mt-6">
-              <h2 className="text-3xl font-black">
-                {mode === "login" ? "Entrer dans l’espace privé" : "Créer un accès membre"}
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-white/58">
-                {mode === "login"
-                  ? "Connecte-toi pour accéder directement au dashboard."
-                  : "Crée ton accès en quelques secondes puis entre dans l’univers EtherCristal."}
-              </p>
-            </div>
-
-            {message ? (
-              <div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-                {message}
-              </div>
-            ) : null}
-
+            {/* Alerts */}
             {error ? (
-              <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                 {error}
               </div>
             ) : null}
+            {info ? (
+              <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                {info}
+              </div>
+            ) : null}
 
-            <form
-              onSubmit={mode === "login" ? handleLogin : handleRegister}
-              className="mt-6 space-y-4"
-            >
+            <div className="mt-5 space-y-4">
+              {/* Pseudo (register only) */}
               {mode === "register" ? (
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-white/75">Pseudo</label>
-                  <input
-                    type="text"
-                    value={pseudo}
-                    onChange={(e) => {
-                      setPseudo(e.target.value);
-                      if (error) setError("");
-                    }}
-                    placeholder="Ton nom privé"
-                    required={mode === "register"}
-                    minLength={3}
-                    maxLength={24}
-                    className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none transition focus:border-amber-300/35 focus:bg-black/55"
-                  />
+                  <label className="mb-2 block text-xs font-black uppercase tracking-[0.22em] text-white/45">
+                    Pseudo
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                    <input
+                      value={pseudo}
+                      onChange={(e) => setPseudo(e.target.value)}
+                      placeholder="Ton pseudo (ex: EtherCristal)"
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
+                    />
+                  </div>
                 </div>
               ) : null}
 
+              {/* Email */}
               <div>
-                <label className="mb-2 block text-sm font-medium text-white/75">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (error) setError("");
-                  }}
-                  placeholder="toi@exemple.com"
-                  autoComplete="email"
-                  required
-                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none transition focus:border-amber-300/35 focus:bg-black/55"
-                />
+                <label className="mb-2 block text-xs font-black uppercase tracking-[0.22em] text-white/45">
+                  Email
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                  <input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    inputMode="email"
+                    autoComplete="email"
+                    placeholder="email@domaine.com"
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
+                  />
+                </div>
               </div>
 
+              {/* Password */}
               <div>
-                <label className="mb-2 block text-sm font-medium text-white/75">
+                <label className="mb-2 block text-xs font-black uppercase tracking-[0.22em] text-white/45">
                   Mot de passe
                 </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (error) setError("");
-                  }}
-                  placeholder="••••••••"
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  required
-                  minLength={8}
-                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none transition focus:border-amber-300/35 focus:bg-black/55"
-                />
-                {mode === "register" ? (
-                  <p
-                    className={`mt-2 text-xs font-semibold ${
-                      passwordStrength === "fort"
-                        ? "text-emerald-300"
-                        : passwordStrength === "moyen"
-                        ? "text-amber-300"
-                        : "text-red-300"
-                    }`}
+
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                  <input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    type={showPw ? "text" : "password"}
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    placeholder={mode === "login" ? "••••••••" : "Min 8 caractères"}
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-12 text-sm text-white outline-none transition focus:border-rose-400/35"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onSubmit();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
+                    aria-label="Toggle password visibility"
                   >
-                    Force du mot de passe : {passwordStrength}
-                  </p>
+                    {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                {mode === "register" ? (
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span className="text-white/50">Force :</span>
+                    <span
+                      className={cx(
+                        "font-black",
+                        pwScore <= 1 && "text-red-200",
+                        pwScore === 2 && "text-amber-200",
+                        pwScore === 3 && "text-cyan-200",
+                        pwScore >= 4 && "text-emerald-200"
+                      )}
+                    >
+                      {pwLabel}
+                    </span>
+                  </div>
                 ) : null}
               </div>
 
-              {mode === "register" ? (
-                <>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-white/75">
-                      Confirmer le mot de passe
-                    </label>
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => {
-                        setConfirmPassword(e.target.value);
-                        if (error) setError("");
-                      }}
-                      placeholder="••••••••"
-                      autoComplete="new-password"
-                      required={mode === "register"}
-                      minLength={8}
-                      className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none transition focus:border-amber-300/35 focus:bg-black/55"
-                    />
-                  </div>
-
-                  <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/72">
-                    <input
-                      type="checkbox"
-                      checked={ageConfirmed}
-                      onChange={(e) => {
-                        setAgeConfirmed(e.target.checked);
-                        if (error) setError("");
-                      }}
-                      className="mt-1"
-                      required={mode === "register"}
-                    />
-                    <span>
-                      Je confirme avoir 18 ans ou plus et accéder à un espace privé réservé aux
-                      adultes.
-                    </span>
-                  </label>
-                </>
-              ) : null}
-
+              {/* Submit */}
               <button
-                type="submit"
+                onClick={onSubmit}
                 disabled={loading}
-                className="mt-2 w-full rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-5 py-3.5 text-sm font-black text-black shadow-[0_10px_35px_rgba(255,0,90,.35)] transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-70"
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-3 text-sm font-black text-black shadow-[0_18px_55px_rgba(0,0,0,0.35)] transition hover:opacity-95 disabled:opacity-70"
               >
-                {loading
-                  ? "Traitement..."
-                  : mode === "login"
-                  ? "Se connecter"
-                  : "Créer mon compte"}
+                {mode === "login" ? "Se connecter" : "Créer le compte"}
+                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
               </button>
-            </form>
 
-            <div className="mt-6 grid grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
-                <p className="text-[10px] uppercase tracking-[0.25em] text-white/38">Accès</p>
-                <p className="mt-2 text-xs font-bold text-white/88">Privé</p>
+              {/* Footer links */}
+              <div className="pt-2 text-center text-xs text-white/45">
+                {mode === "login" ? (
+                  <>
+                    Pas encore inscrit ?{" "}
+                    <button
+                      onClick={() => setMode("register")}
+                      className="font-black text-white/80 hover:text-white"
+                    >
+                      Créer un compte
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    Déjà membre ?{" "}
+                    <button
+                      onClick={() => setMode("login")}
+                      className="font-black text-white/80 hover:text-white"
+                    >
+                      Se connecter
+                    </button>
+                  </>
+                )}
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
-                <p className="text-[10px] uppercase tracking-[0.25em] text-white/38">Style</p>
-                <p className="mt-2 text-xs font-bold text-white/88">Nocturne</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-center">
-                <p className="text-[10px] uppercase tracking-[0.25em] text-white/38">Sortie</p>
-                <p className="mt-2 text-xs font-bold text-white/88">Dashboard</p>
+
+              <div className="pt-2 text-center text-[11px] text-white/35">
+                En continuant, tu confirmes avoir 18+.
               </div>
             </div>
           </div>
-        </section>
+
+          {/* small bottom spacing */}
+          <div className="mt-6 text-center text-[11px] text-white/30">
+            EtherCristal • privé • premium
+          </div>
+        </div>
       </div>
     </div>
   );

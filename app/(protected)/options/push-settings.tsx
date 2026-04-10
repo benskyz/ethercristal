@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import { savePushSubscription, removePushSubscription } from "@/lib/push";
-
-const supabase = requireSupabaseBrowserClient();
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
 export default function PushSettings() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
-  const [result, setResult] = useState("Notifications push inactives.");
+  const [result, setResult] = useState("Vérification de la session...");
 
   useEffect(() => {
     let cancelled = false;
 
     async function checkSession() {
       try {
+        const supabase = requireSupabaseBrowserClient();
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -28,9 +27,9 @@ export default function PushSettings() {
           setResult("Session active. Tu peux activer les notifications push.");
         } else {
           setReady(false);
-          setResult("Session absente. Déconnecte-toi puis reconnecte-toi.");
+          setResult("Session absente. Reconnecte-toi sur ce même domaine.");
         }
-      } catch (error) {
+      } catch {
         if (!cancelled) {
           setReady(false);
           setResult("Impossible de vérifier la session Supabase.");

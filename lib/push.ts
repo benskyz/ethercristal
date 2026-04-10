@@ -1,3 +1,7 @@
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
+
+const supabase = requireSupabaseBrowserClient();
+
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -38,7 +42,7 @@ export async function registerPush(vapidPublicKey: string) {
     throw new Error("Permission notification refusée.");
   }
 
-  const registration = await navigator.serviceWorker.register("/sw.js?v=100", {
+  const registration = await navigator.serviceWorker.register("/sw.js?v=101", {
     scope: "/",
   });
 
@@ -64,11 +68,22 @@ export async function sendPush(
   subscription: Record<string, unknown>,
   payload: PushPayload
 ) {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error("Session Supabase introuvable. Reconnecte-toi.");
+  }
+
   const response = await fetch(
     "https://czmhgljqtumnbnmeiuzb.supabase.co/functions/v1/send-push",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
       body: JSON.stringify({
         subscription,
         title: payload.title,

@@ -20,14 +20,14 @@ export default function PushTestPage() {
       setResult(
         "Nouvelle subscription créée :\n\n" +
           JSON.stringify(subscription, null, 2) +
-          "\n\nEnvoi en cours..."
+          "\n\nEnvoi sécurisé en cours..."
       );
 
       const response = await sendPush(subscription, {
         title: "Test EtherCristal",
-        body: "Le système de notifications push fonctionne.",
+        body: "Le système de notifications push sécurisé fonctionne.",
         url: "/dashboard",
-        tag: "ethercristal-test",
+        tag: "ethercristal-test-secure",
       });
 
       setResult(`Succès ✅\n\n${JSON.stringify(response, null, 2)}`);
@@ -45,10 +45,11 @@ export default function PushTestPage() {
     <main className="min-h-screen bg-black px-6 py-10 text-white">
       <div className="mx-auto max-w-2xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Test Push</h1>
+          <h1 className="text-2xl font-bold text-white">Test Push sécurisé</h1>
           <p className="mt-2 text-sm text-white/70">
             Cette page recrée une subscription propre et appelle la fonction
-            <span className="mx-1 font-semibold text-white">send-push</span>.
+            <span className="mx-1 font-semibold text-white">send-push</span>
+            avec le token de session Supabase.
           </p>
         </div>
 

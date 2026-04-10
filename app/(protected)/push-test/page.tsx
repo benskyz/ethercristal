@@ -7,13 +7,20 @@ import { registerPush, sendPush } from "@/lib/push";
 const VAPID_PUBLIC_KEY =
   "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
 
-const BUILD_MARK = "push-debug-v1";
+function decodeJwtPayload(token: string) {
+  try {
+    const payload = token.split(".")[1];
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(base64));
+  } catch {
+    return null;
+  }
+}
 
 export default function PushTestPage() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
-  const [clicks, setClicks] = useState(0);
   const [result, setResult] = useState<string>("Vérification de la session...");
 
   useEffect(() => {
@@ -22,6 +29,7 @@ export default function PushTestPage() {
     async function checkSession() {
       try {
         const supabase = requireSupabaseBrowserClient();
+
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -29,32 +37,27 @@ export default function PushTestPage() {
         if (cancelled) return;
 
         if (session?.access_token) {
+          const payload = decodeJwtPayload(session.access_token);
+
           setReady(true);
           setResult(
             `Session active ✅
 
-build: ${BUILD_MARK}
 user_id: ${session.user.id}
-email: ${session.user.email ?? "inconnu"}`
+email: ${session.user.email ?? "inconnu"}
+token_ref: ${payload?.ref ?? "introuvable"}
+token_role: ${payload?.role ?? "introuvable"}`
           );
         } else {
           setReady(false);
           setResult(
-            `Session absente.
-
-build: ${BUILD_MARK}
-
-Reconnecte-toi sur ce même domaine puis recharge la page.`
+            "Session absente. Reconnecte-toi sur ce même domaine puis recharge la page."
           );
         }
       } catch (error) {
         if (!cancelled) {
           setReady(false);
-          setResult(
-            `Impossible de vérifier la session Supabase.
-
-build: ${BUILD_MARK}`
-          );
+          setResult("Impossible de vérifier la session Supabase.");
         }
       } finally {
         if (!cancelled) {
@@ -71,31 +74,16 @@ build: ${BUILD_MARK}`
   }, []);
 
   async function handlePushTest() {
-    const nextClicks = clicks + 1;
-    setClicks(nextClicks);
-
     try {
       setLoading(true);
-      setResult(
-        `Clic détecté ✅
-
-build: ${BUILD_MARK}
-clicks: ${nextClicks}
-
-Création d'une nouvelle subscription...`
-      );
+      setResult("Création d'une nouvelle subscription...");
 
       const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
       setResult(
-        `Subscription créée ✅
-
-build: ${BUILD_MARK}
-clicks: ${nextClicks}
-
-${JSON.stringify(subscription, null, 2)}
-
-Envoi sécurisé en cours...`
+        "Nouvelle subscription créée :\n\n" +
+          JSON.stringify(subscription, null, 2) +
+          "\n\nEnvoi sécurisé en cours..."
       );
 
       const response = await sendPush(subscription, {
@@ -105,26 +93,12 @@ Envoi sécurisé en cours...`
         tag: "ethercristal-test-secure",
       });
 
-      setResult(
-        `Succès ✅
-
-build: ${BUILD_MARK}
-clicks: ${nextClicks}
-
-${JSON.stringify(response, null, 2)}`
-      );
+      setResult(`Succès ✅\n\n${JSON.stringify(response, null, 2)}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erreur inconnue";
 
-      setResult(
-        `Erreur ❌
-
-build: ${BUILD_MARK}
-clicks: ${nextClicks}
-
-${message}`
-      );
+      setResult(`Erreur ❌\n\n${message}`);
     } finally {
       setLoading(false);
     }
@@ -140,7 +114,6 @@ ${message}`
             propre et appelle la fonction
             <span className="mx-1 font-semibold text-white">send-push</span>.
           </p>
-          <p className="mt-2 text-xs text-white/45">{BUILD_MARK}</p>
         </div>
 
         <button

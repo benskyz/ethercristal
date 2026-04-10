@@ -1,9 +1,9 @@
 self.addEventListener("install", () => {
-  console.log("SW installed");
+  self.skipWaiting();
 });
 
-self.addEventListener("activate", () => {
-  console.log("SW activated");
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
 });
 
 self.addEventListener("push", (event) => {
@@ -18,10 +18,35 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "Notification", {
       body: data.body || "Push reçu.",
+      icon: data.icon || "/favicon.ico",
+      badge: data.badge || "/favicon.ico",
+      data: {
+        url: data.url || "/dashboard",
+        ...(data.data || {}),
+      },
     })
   );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
+  const targetUrl = event.notification?.data?.url || "/dashboard";
+
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ("focus" in client) {
+          try {
+            client.navigate(targetUrl);
+          } catch {}
+          return client.focus();
+        }
+      }
+
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
 });

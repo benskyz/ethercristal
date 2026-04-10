@@ -11,6 +11,13 @@ export function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
+export async function resetOldServiceWorkers() {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
+  const regs = await navigator.serviceWorker.getRegistrations();
+  await Promise.all(regs.map((reg) => reg.unregister()));
+}
+
 export async function registerPush(vapidPublicKey: string) {
   if (typeof window === "undefined") {
     throw new Error("Fenêtre non disponible.");
@@ -24,13 +31,19 @@ export async function registerPush(vapidPublicKey: string) {
     throw new Error("Push non supporté.");
   }
 
+  await resetOldServiceWorkers();
+
   const permission = await Notification.requestPermission();
 
   if (permission !== "granted") {
     throw new Error("Permission notification refusée.");
   }
 
-  const registration = await navigator.serviceWorker.register("/sw.js");
+  const registration = await navigator.serviceWorker.register("/sw.js?v=10", {
+    scope: "/",
+  });
+
+  await navigator.serviceWorker.ready;
 
   let subscription = await registration.pushManager.getSubscription();
 

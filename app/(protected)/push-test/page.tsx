@@ -13,7 +13,7 @@ export default function PushTestPage() {
   async function handlePushTest() {
     try {
       setLoading(true);
-      setResult("");
+      setResult("Préparation du test...");
 
       const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
@@ -29,14 +29,20 @@ export default function PushTestPage() {
             title: "Test EtherCristal",
             body: "Ta notification push fonctionne.",
             url: "/dashboard",
-            icon: "/icons/icon-192.png",
-            badge: "/icons/badge-72.png",
+            icon: "/favicon.ico",
+            badge: "/favicon.ico",
           }),
         }
       );
 
-      const data = await res.json();
-      setResult(JSON.stringify(data, null, 2));
+      const text = await res.text();
+
+      try {
+        const json = JSON.parse(text);
+        setResult(JSON.stringify(json, null, 2));
+      } catch {
+        setResult(text);
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erreur inconnue";
@@ -51,8 +57,8 @@ export default function PushTestPage() {
       <div className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
         <h1 className="mb-3 text-2xl font-bold">Test Push</h1>
         <p className="mb-6 text-sm text-white/70">
-          Cette page enregistre le service worker, demande la permission,
-          crée une subscription push et appelle la fonction send-push.
+          Cette page réinitialise les anciens service workers, enregistre le nouveau,
+          demande la permission et envoie une notification de test.
         </p>
 
         <button
@@ -63,7 +69,7 @@ export default function PushTestPage() {
           {loading ? "Envoi..." : "Tester les notifications push"}
         </button>
 
-        <pre className="mt-6 overflow-x-auto rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-green-300">
+        <pre className="mt-6 overflow-x-auto rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-green-300 whitespace-pre-wrap">
           {result || "Aucun résultat pour le moment."}
         </pre>
       </div>

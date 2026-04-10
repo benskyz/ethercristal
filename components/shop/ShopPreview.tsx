@@ -1,40 +1,33 @@
-import { ProfileRow } from "./shop-types";
-import { getPreviewName, getPreviewNameStyle } from "./shop-utils";
+"use client";
+
+import type { ShopProfile } from "./shop-types";
 
 type Props = {
-  etherBalance: number;
-  profile: ProfileRow | null;
+  credits: number;
+  profile?: Partial<ShopProfile> | null;
 };
 
-export default function ShopPreview({ etherBalance, profile }: Props) {
+export default function ShopPreview({ credits, profile }: Props) {
   return (
-    <section className="shop-preview ec-section">
-      <article className="ec-card shop-previewCard">
-        <div className="ec-card-shine" />
+    <div className="rounded-[24px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
+      <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+        aperçu compte
+      </div>
 
-        <div className="shop-previewTop">
-          <div>
-            <div className="ec-card-kicker">Aperçu connecté</div>
-            <h2 className="ec-card-title">Rendu actuel du profil</h2>
-            <p className="ec-card-text">
-              Les effets que tu achètes ici alimentent ensuite ton profil, le dashboard,
-              DésirIntense et l’écosystème salons.
-            </p>
-          </div>
+      <div className="mt-3 text-lg font-black text-white">
+        {profile?.pseudo || "Membre Ether"}
+      </div>
 
-          <div className="shop-previewRight">
-            <span className="ec-badge ec-badge-gold">{etherBalance} Ξ</span>
-            <span className="ec-badge ec-badge-soft">{profile?.vip_level || "Standard"}</span>
-            {profile?.is_verified ? (
-              <span className="ec-badge ec-badge-blue">Vérifié</span>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="shop-previewName" style={getPreviewNameStyle(profile)}>
-          {getPreviewName(profile)}
-        </div>
-      </article>
-    </section>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className="rounded-full border border-amber-400/18 bg-amber-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-amber-100">
+          {credits} Ξ
+        </span>
+        {profile?.is_vip ? (
+          <span className="rounded-full border border-fuchsia-400/18 bg-fuchsia-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-fuchsia-100">
+            VIP
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }

@@ -1,883 +1,989 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
-import {
-  ShoppingBag,
-  Crown,
-  Sparkles,
-  Gem,
-  Zap,
-  Wand2,
-  RefreshCw,
-  Shield,
-  X,
-  Check,
-  Lock,
-  Search,
-  ArrowUpDown,
-  Power,
-} from "lucide-react";
+import Sidebar from "@/components/Sidebar";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import ProfileName, { DisplayProfile } from "@/components/ProfileName";
 import {
-  getItemsByCategory,
-  rarityBadgeClass,
-  ShopItem,
-} from "@/lib/shop";
+  ensureProfileRecord,
+  isVipActive,
+  profileDisplayName,
+  type ProfileRow,
+} from "@/lib/profileCompat";
+import {
+  Check,
+  Crown,
+  Gem,
+  Loader2,
+  Lock,
+  Menu,
+  RefreshCw,
+  Search,
+  Shield,
+  ShoppingBag,
+  Sparkles,
+  Star,
+  Wand2,
+  Wallet,
+  Zap,
+} from "lucide-react";
 
-const supabase = requireSupabaseBrowserClient();
-
-type ProfileRow = DisplayProfile & {
-  id: string;
-  credits?: number | null;
-  vip_expires_at?: string | null;
-
-  active_name_fx_key?: string | null;
-  active_badge_key?: string | null;
-  active_title_key?: string | null;
-
-  master_title?: string | null;
-  master_title_style?: string | null;
+type ShopItemRow = {
+  id: number | string;
+  item_key: string;
+  title: string;
+  description: string | null;
+  price: number | null;
+  category: string | null;
+  rarity: string | null;
+  preview_style: string | null;
+  is_active: boolean | null;
+  metadata: Record<string, unknown> | null;
 };
 
 type InventoryRow = {
   id: string;
   user_id: string;
   item_key: string;
+  item_type: string | null;
   equipped: boolean | null;
+  meta: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
-function cx(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
+type ShopPurchaseRow = {
+  id: number | string;
+  user_id: string;
+  payment_id: string | null;
+  item_id: number | null;
+  item_key: string | null;
+  title: string;
+  status: "pending" | "paid" | "refunded" | "cancelled";
+  amount: number;
+  currency: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type PaymentRow = {
+  id: string;
+  user_id: string | null;
+  purchase_type: string;
+  item_key: string | null;
+  amount: number;
+  currency: string;
+  status: "pending" | "paid" | "failed" | "refunded" | "cancelled";
+  provider: string;
+  created_at: string;
+  updated_at?: string | null;
+};
+
+type SessionResult = {
+  ok?: boolean;
+  paymentId?: string;
+  status?: string;
+  checkoutUrl?: string;
+  message?: string;
+  error?: string;
+};
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function isVipActive(vip_expires_at?: string | null) {
-  if (!vip_expires_at) return false;
-  const d = new Date(vip_expires_at);
-  if (Number.isNaN(d.getTime())) return false;
-  return d > new Date();
+function formatMoney(amount: number, currency = "CAD") {
+  try {
+    return new Intl.NumberFormat("fr-CA", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
 }
 
-type MainTab = "effects" | "vip" | "master";
-type EffectsTab = "name_fx" | "badge" | "title";
-type SortKey = "rarity" | "price";
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("fr-CA");
+}
 
-const rarityRank: Record<string, number> = { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4, MYTHIC: 5 };
+function rarityTone(rarity?: string | null) {
+  const key = String(rarity || "").toLowerCase();
 
-export default function BoutiquePage() {
-  const router = useRouter();
+  if (key === "legendary") return "gold";
+  if (key === "epic") return "violet";
+  if (key === "rare") return "green";
+  return "default";
+}
 
-  const [mainTab, setMainTab] = useState<MainTab>("effects");
-  const [effectsTab, setEffectsTab] = useState<EffectsTab>("name_fx");
-  const [sortKey, setSortKey] = useState<SortKey>("rarity");
-  const [query, setQuery] = useState("");
+function humanCategory(category?: string | null) {
+  return String(category || "effect").replace(/_/g, " ");
+}
 
-  const [loading, setLoading] = useState(true);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+function itemVipRequired(item: ShopItemRow) {
+  return Boolean((item.metadata || {}).vipRequired);
+}
 
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [inventory, setInventory] = useState<InventoryRow[]>([]);
+function itemSlot(item: ShopItemRow) {
+  return String((item.metadata || {}).slot || item.category || "effect");
+}
 
-  const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
+function previewTone(style?: string | null) {
+  const key = String(style || "").toLowerCase();
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalItem, setModalItem] = useState<ShopItem | null>(null);
-
-  const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
-  const credits = profile?.credits ?? 0;
-  const vipOk = isVipActive(profile?.vip_expires_at) || isAdmin;
-
-  const ownedKeys = useMemo(() => new Set(inventory.map((x) => x.item_key)), [inventory]);
-
-  const nameFx = useMemo(() => getItemsByCategory("name_fx"), []);
-  const badges = useMemo(() => getItemsByCategory("badge"), []);
-  const titles = useMemo(() => getItemsByCategory("title"), []);
-  const vipPlans = useMemo(() => getItemsByCategory("vip_plan"), []);
-  const masterEther = useMemo(() => getItemsByCategory("master_ether"), []);
-
-  const activeNameFx = profile?.active_name_fx_key ?? null;
-  const activeBadge = profile?.active_badge_key ?? null;
-  const activeTitle = profile?.active_title_key ?? null;
-
-  async function getAuthedUserOrRedirect() {
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) {
-      router.push("/enter");
-      return null;
-    }
-    return user;
+  if (key.includes("crystal")) {
+    return "from-cyan-300/25 via-white/10 to-cyan-300/10";
+  }
+  if (key.includes("void")) {
+    return "from-fuchsia-400/25 via-purple-500/10 to-fuchsia-400/10";
+  }
+  if (key.includes("obsidian")) {
+    return "from-red-500/25 via-white/5 to-fuchsia-500/10";
+  }
+  if (key.includes("ember")) {
+    return "from-orange-400/25 via-red-500/10 to-pink-500/10";
   }
 
-  async function loadAll() {
-    setLoading(true);
-    setError("");
-    setInfo("");
+  return "from-white/10 via-white/5 to-white/10";
+}
 
-    const user = await getAuthedUserOrRedirect();
-    if (!user) return;
-
-    const [pRes, invRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style")
-        .eq("id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("inventory_items")
-        .select("id, user_id, item_key, equipped")
-        .eq("user_id", user.id),
-    ]);
-
-    if (pRes.error) setError(pRes.error.message);
-    else setProfile((pRes.data as any) ?? null);
-
-    if (invRes.error) setError((prev) => prev || invRes.error!.message);
-    else setInventory((invRes.data ?? []) as InventoryRow[]);
-
-    setLoading(false);
-  }
-
-  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
-
-  function openBuy(item: ShopItem) {
-    setModalItem(item);
-    setModalOpen(true);
-    setError("");
-    setInfo("");
-  }
-  function closeModal() {
-    setModalOpen(false);
-    setModalItem(null);
-  }
-
-  function isActive(item: ShopItem) {
-    if (!profile) return false;
-    if (item.category === "name_fx") return profile.active_name_fx_key === item.key;
-    if (item.category === "badge") return profile.active_badge_key === item.key;
-    if (item.category === "title") return profile.active_title_key === item.key;
-    if (item.category === "master_ether") return Boolean(isAdmin && profile.master_title === (item.titleText ?? item.name));
-    if (item.category === "vip_plan") return vipOk;
-    return false;
-  }
-
-  async function addToInventoryIfMissing(item: ShopItem) {
-    if (!profile?.id) return;
-    if (ownedKeys.has(item.key)) return;
-
-    const { error } = await supabase.from("inventory_items").insert({
-      user_id: profile.id,
-      item_key: item.key,
-      equipped: false,
-    });
-
-    if (error) throw new Error(error.message);
-
-    setInventory((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), user_id: profile.id, item_key: item.key, equipped: false } as any,
-    ]);
-  }
-
-  async function buy(item: ShopItem) {
-    if (!profile?.id) return;
-
-    setBusyKey(item.key);
-    setError("");
-    setInfo("");
-
-    try {
-      if (item.requiresMaster && !isAdmin) {
-        setError("Réservé au Maître Ether.");
-        return;
-      }
-      if (ownedKeys.has(item.key)) {
-        setInfo("Déjà possédé.");
-        return;
-      }
-      if ((profile.credits ?? 0) < item.price) {
-        setError("Crédits insuffisants.");
-        return;
-      }
-
-      const nextCredits = (profile.credits ?? 0) - item.price;
-
-      const upd = await supabase.from("profiles").update({ credits: nextCredits }).eq("id", profile.id);
-      if (upd.error) throw new Error(upd.error.message);
-
-      await addToInventoryIfMissing(item);
-
-      setProfile((p) => (p ? ({ ...p, credits: nextCredits } as any) : p));
-      setInfo(`Achat réussi : ${item.name} ✅`);
-    } catch (e: any) {
-      setError(e?.message || "Erreur achat.");
-    } finally {
-      setBusyKey(null);
-      closeModal();
-    }
-  }
-
-  async function activate(item: ShopItem) {
-    if (!profile?.id) return;
-
-    setBusyKey(item.key);
-    setError("");
-    setInfo("");
-
-    try {
-      if (item.category === "master_ether" && !isAdmin) {
-        setError("Réservé au Maître Ether.");
-        return;
-      }
-
-      if (item.category !== "vip_plan" && item.category !== "master_ether") {
-        if (!ownedKeys.has(item.key)) {
-          setError("Tu dois acheter avant d’activer.");
-          return;
-        }
-      }
-
-      const patch: any = {};
-      if (item.category === "name_fx") patch.active_name_fx_key = item.key;
-      if (item.category === "badge") patch.active_badge_key = item.key;
-      if (item.category === "title") patch.active_title_key = item.key;
-
-      if (item.category === "master_ether") {
-        patch.master_title = item.titleText ?? item.name;
-        patch.master_title_style = item.previewClass ?? "text-white/70";
-      }
-
-      const upd = await supabase.from("profiles").update(patch).eq("id", profile.id);
-      if (upd.error) throw new Error(upd.error.message);
-
-      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
-      setInfo(`Activé : ${item.name} ✨`);
-    } catch (e: any) {
-      setError(e?.message || "Erreur activation.");
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  async function deactivateCategory(cat: "name_fx" | "badge" | "title" | "master_ether") {
-    if (!profile?.id) return;
-
-    setBusyKey(`off_${cat}`);
-    setError("");
-    setInfo("");
-
-    try {
-      const patch: any = {};
-      if (cat === "name_fx") patch.active_name_fx_key = null;
-      if (cat === "badge") patch.active_badge_key = null;
-      if (cat === "title") patch.active_title_key = null;
-      if (cat === "master_ether") {
-        if (!isAdmin) return;
-        patch.master_title = null;
-        patch.master_title_style = null;
-      }
-
-      const upd = await supabase.from("profiles").update(patch).eq("id", profile.id);
-      if (upd.error) throw new Error(upd.error.message);
-
-      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
-      setInfo("Désactivé ✅");
-    } catch (e: any) {
-      setError(e?.message || "Erreur désactivation.");
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  // VIP 7/30/90 (extends if already VIP)
-  async function buyVip(plan: ShopItem) {
-    if (!profile?.id) return;
-
-    setBusyKey(plan.key);
-    setError("");
-    setInfo("");
-
-    try {
-      if ((profile.credits ?? 0) < plan.price) {
-        setError("Crédits insuffisants.");
-        return;
-      }
-
-      const days = Number(plan.meta?.days ?? 0);
-      if (!days) {
-        setError("Plan VIP invalide.");
-        return;
-      }
-
-      const now = new Date();
-      const currentExpiry = profile.vip_expires_at ? new Date(profile.vip_expires_at) : null;
-      const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
-      const next = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
-
-      const nextCredits = (profile.credits ?? 0) - plan.price;
-
-      // VIP style auto (applied only if user has none active)
-      const vipBadgeKey = "badge_vip_gold";
-      const vipTitleKey = "title_private_host";
-
-      const patch: any = {
-        credits: nextCredits,
-        vip_expires_at: next.toISOString(),
-        active_badge_key: profile.active_badge_key || vipBadgeKey,
-        active_title_key: profile.active_title_key || vipTitleKey,
-      };
-
-      const upd = await supabase.from("profiles").update(patch).eq("id", profile.id);
-      if (upd.error) throw new Error(upd.error.message);
-
-      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
-      setInfo(`VIP activé (${days} jours) 👑`);
-    } catch (e: any) {
-      setError(e?.message || "Erreur VIP.");
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  const effectsList = useMemo(() => {
-    const base = effectsTab === "name_fx" ? nameFx : effectsTab === "badge" ? badges : titles;
-
-    const q = query.trim().toLowerCase();
-    const filtered = !q
-      ? base
-      : base.filter((it) =>
-          `${it.name} ${it.description} ${it.vibe} ${it.rarity}`.toLowerCase().includes(q)
-        );
-
-    const sorted = [...filtered].sort((a, b) => {
-      if (sortKey === "price") return a.price - b.price;
-      const ra = rarityRank[a.rarity] ?? 0;
-      const rb = rarityRank[b.rarity] ?? 0;
-      if (ra !== rb) return rb - ra;
-      return a.price - b.price;
-    });
-
-    return sorted;
-  }, [effectsTab, nameFx, badges, titles, query, sortKey]);
+function Tag({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "gold" | "violet" | "green" | "red";
+}) {
+  const styles =
+    tone === "gold"
+      ? "border-amber-400/18 bg-amber-500/10 text-amber-100"
+      : tone === "violet"
+      ? "border-fuchsia-400/18 bg-fuchsia-500/10 text-fuchsia-100"
+      : tone === "green"
+      ? "border-emerald-400/18 bg-emerald-500/10 text-emerald-100"
+      : tone === "red"
+      ? "border-red-400/18 bg-red-500/10 text-red-100"
+      : "border-white/10 bg-white/[0.04] text-white/72";
 
   return (
-    <div className="space-y-6">
-      {/* Buy Modal */}
-      {modalOpen && modalItem ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeModal} />
-          <div className="relative w-full max-w-lg rounded-[28px] border border-white/10 bg-zinc-950/80 p-6 shadow-[0_30px_90px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-xs uppercase tracking-[0.22em] text-white/45">Confirmer l’achat</div>
-                <h2 className="mt-2 text-2xl font-black text-white">{modalItem.name}</h2>
-                <p className="mt-2 text-sm leading-6 text-white/60">{modalItem.description}</p>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <span className={cx("rounded-full border px-3 py-1 text-xs font-black", rarityBadgeClass(modalItem.rarity))}>
-                    {modalItem.rarity}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-black text-white/70">
-                    {modalItem.vibe}
-                  </span>
-                  <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs font-black text-emerald-200">
-                    {modalItem.price} crédits
-                  </span>
-                </div>
-              </div>
-
-              <button onClick={closeModal} className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10" title="Fermer">
-                <X className="h-4 w-4 text-white/80" />
-              </button>
-            </div>
-
-            <div className="mt-6 flex gap-3">
-              <button onClick={closeModal} className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/80 hover:bg-white/10">
-                Annuler
-              </button>
-              <button
-                onClick={() => buy(modalItem)}
-                disabled={busyKey === modalItem.key}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-3 text-sm font-black text-black hover:opacity-95 disabled:opacity-70"
-              >
-                <Check className="h-4 w-4" />
-                {busyKey === modalItem.key ? "..." : "Acheter"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Header */}
-      <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl sm:p-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.16),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%)]" />
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
-              <ShoppingBag className="h-3.5 w-3.5" />
-              Boutique
-            </div>
-
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">Effets & VIP</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
-              Acheter → inventaire. Activer → pseudo stylé partout.
-            </p>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                {credits} crédits
-              </span>
-              <span className={cx("rounded-full border px-3 py-1 text-xs font-black",
-                vipOk ? "border-amber-400/20 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/10 text-white/55"
-              )}>
-                {vipOk ? "VIP actif" : "Non VIP"}
-              </span>
-              {isAdmin ? (
-                <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs font-black text-violet-200">
-                  Maître Ether
-                </span>
-              ) : null}
-            </div>
-
-            {profile ? (
-              <div className="mt-6 rounded-[28px] border border-white/10 bg-black/30 p-5">
-                <div className="text-xs uppercase tracking-[0.22em] text-white/40">Aperçu</div>
-                <div className="mt-2">
-                  <ProfileName profile={profile} size="lg" showTitle />
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => deactivateCategory("name_fx")}
-                    disabled={!activeNameFx}
-                    className={cx(
-                      "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
-                      activeNameFx ? "border-white/10 bg-white/10 text-white/80 hover:bg-white/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
-                    )}
-                  >
-                    <Power className="h-4 w-4" /> Off Nom
-                  </button>
-
-                  <button
-                    onClick={() => deactivateCategory("badge")}
-                    disabled={!activeBadge}
-                    className={cx(
-                      "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
-                      activeBadge ? "border-white/10 bg-white/10 text-white/80 hover:bg-white/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
-                    )}
-                  >
-                    <Power className="h-4 w-4" /> Off Badge
-                  </button>
-
-                  <button
-                    onClick={() => deactivateCategory("title")}
-                    disabled={!activeTitle}
-                    className={cx(
-                      "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
-                      activeTitle ? "border-white/10 bg-white/10 text-white/80 hover:bg-white/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
-                    )}
-                  >
-                    <Power className="h-4 w-4" /> Off Titre
-                  </button>
-
-                  {isAdmin ? (
-                    <button
-                      onClick={() => deactivateCategory("master_ether")}
-                      disabled={!profile.master_title}
-                      className={cx(
-                        "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-black transition",
-                        profile.master_title ? "border-violet-400/20 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15" : "border-white/10 bg-white/5 text-white/40 cursor-not-allowed"
-                      )}
-                    >
-                      <Power className="h-4 w-4" /> Off Ether
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/inventaire")}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
-            >
-              <Gem className="h-4 w-4" /> Inventaire
-            </button>
-
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard")}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
-            >
-              <Shield className="h-4 w-4" /> Dashboard
-            </button>
-
-            <button
-              type="button"
-              onClick={loadAll}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
-            >
-              <RefreshCw className="h-4 w-4" /> Actualiser
-            </button>
-          </div>
-        </div>
-
-        <div className="relative mt-6 flex flex-wrap gap-2">
-          <MainTabButton active={mainTab === "effects"} onClick={() => setMainTab("effects")} label="Effets" icon={<Sparkles className="h-4 w-4" />} />
-          <MainTabButton active={mainTab === "vip"} onClick={() => setMainTab("vip")} label="VIP" icon={<Crown className="h-4 w-4" />} />
-          <MainTabButton active={mainTab === "master"} onClick={() => setMainTab("master")} label="Maître Ether" icon={<Wand2 className="h-4 w-4" />} locked={!isAdmin} />
-        </div>
-      </section>
-
-      {error ? <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div> : null}
-      {info ? <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{info}</div> : null}
-
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className="h-[260px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-          ))}
-        </div>
-      ) : mainTab === "effects" ? (
-        <>
-          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-wrap gap-2">
-                <MiniTab active={effectsTab === "name_fx"} onClick={() => setEffectsTab("name_fx")} label="Nom" icon={<Sparkles className="h-4 w-4" />} />
-                <MiniTab active={effectsTab === "badge"} onClick={() => setEffectsTab("badge")} label="Badge" icon={<Gem className="h-4 w-4" />} />
-                <MiniTab active={effectsTab === "title"} onClick={() => setEffectsTab("title")} label="Titre" icon={<Zap className="h-4 w-4" />} />
-              </div>
-
-              <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:justify-end">
-                <div className="relative w-full lg:max-w-sm">
-                  <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Chercher..."
-                    className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
-                  />
-                </div>
-
-                <button
-                  onClick={() => setSortKey((s) => (s === "rarity" ? "price" : "rarity"))}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10"
-                >
-                  <ArrowUpDown className="h-4 w-4" />
-                  Tri: {sortKey === "rarity" ? "Rareté" : "Prix"}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {effectsList.map((item) => {
-              const owned = ownedKeys.has(item.key);
-              const active = isActive(item);
-              return (
-                <ShopCard
-                  key={item.key}
-                  item={item}
-                  owned={owned}
-                  active={active}
-                  busy={busyKey === item.key}
-                  onBuy={() => openBuy(item)}
-                  onActivate={() => activate(item)}
-                  onDeactivate={() => deactivateCategory(item.category as any)}
-                />
-              );
-            })}
-          </div>
-        </>
-      ) : mainTab === "vip" ? (
-        <>
-          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <div className="flex items-center gap-2 text-white font-black text-xl">
-              <Crown className="h-5 w-5 text-amber-200" /> VIP / Abonnements
-            </div>
-            <p className="mt-2 text-sm text-white/60">
-              VIP = accès salons VIP + statut. L’achat prolonge la durée.
-            </p>
-            <ul className="mt-4 space-y-2 text-sm text-white/65">
-              <li>• Accès aux salons VIP</li>
-              <li>• Bonus style VIP auto (badge + titre) si rien d’actif</li>
-              <li>• Expiration cumulative</li>
-            </ul>
-          </section>
-
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {vipPlans.slice().sort((a, b) => a.price - b.price).map((plan) => (
-              <VipCard
-                key={plan.key}
-                plan={plan}
-                credits={credits}
-                busy={busyKey === plan.key}
-                onBuy={() => buyVip(plan)}
-              />
-            ))}
-          </div>
-        </>
-      ) : !isAdmin ? (
-        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6">
-          <div className="flex items-center gap-2 font-black text-white/85">
-            <Lock className="h-4 w-4" /> Réservé
-          </div>
-          <p className="mt-2 text-sm text-white/60">Les effets Ether sont réservés au Maître Ether.</p>
-        </div>
-      ) : (
-        <>
-          <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <div className="flex items-center gap-2 text-white font-black text-xl">
-              <Wand2 className="h-5 w-5 text-violet-200" /> Maître Ether
-            </div>
-            <p className="mt-2 text-sm text-white/60">
-              Titres Ether appliqués directement sur ton profil.
-            </p>
-          </section>
-
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {masterEther.map((item) => (
-              <ShopCard
-                key={item.key}
-                item={item}
-                owned={true}
-                active={isActive(item)}
-                busy={busyKey === item.key}
-                onBuy={undefined}
-                onActivate={() => activate(item)}
-                onDeactivate={() => deactivateCategory("master_ether")}
-                forceMaster
-              />
-            ))}
-          </div>
-        </>
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.16em]",
+        styles
       )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Card({
+  title,
+  right,
+  children,
+}: {
+  title: string;
+  right?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="relative overflow-hidden rounded-[28px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.34)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.05),transparent_35%),linear-gradient(135deg,rgba(190,20,20,0.08),rgba(255,0,90,0.05),rgba(255,255,255,0.01))]" />
+      <div className="relative z-10">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="bg-gradient-to-r from-red-300/80 via-white/90 to-fuchsia-300/80 bg-clip-text text-[11px] font-black uppercase tracking-[0.35em] text-transparent">
+            {title}
+          </div>
+          {right}
+        </div>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: ReactNode;
+  icon: ReactNode;
+}) {
+  return (
+    <div className="rounded-[24px] border border-white/10 bg-black/20 p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+          {label}
+        </div>
+        <div className="text-white/60">{icon}</div>
+      </div>
+      <div className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+        {value}
+      </div>
     </div>
   );
 }
 
-function MainTabButton({
-  active,
-  onClick,
+function Row({
   label,
-  icon,
-  locked,
+  value,
 }: {
-  active: boolean;
-  onClick: () => void;
   label: string;
-  icon: React.ReactNode;
-  locked?: boolean;
+  value: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={locked ? undefined : onClick}
-      className={cx(
-        "inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-black transition",
-        active ? "border-white/10 bg-white/15 text-white" : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
-        locked && "opacity-60 cursor-not-allowed"
-      )}
-    >
-      {icon} {label} {locked ? " 🔒" : ""}
-    </button>
+    <div className="flex items-center justify-between gap-4 rounded-[18px] border border-white/8 bg-black/20 px-4 py-3">
+      <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white/36">
+        {label}
+      </div>
+      <div className="text-right text-sm font-black text-white">{value}</div>
+    </div>
   );
 }
 
-function MiniTab({
-  active,
-  onClick,
-  label,
-  icon,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        "inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-black transition",
-        active ? "border-white/10 bg-white/15 text-white" : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
-      )}
-    >
-      {icon} {label}
-    </button>
-  );
-}
-
-function ShopCard({
+function ShopItemCard({
   item,
   owned,
-  active,
-  busy,
+  equipped,
+  locked,
+  buying,
+  isAdmin,
   onBuy,
-  onActivate,
-  onDeactivate,
-  forceMaster,
 }: {
-  item: ShopItem;
+  item: ShopItemRow;
   owned: boolean;
-  active: boolean;
-  busy: boolean;
-  onBuy?: () => void;
-  onActivate: () => void;
-  onDeactivate: () => void;
-  forceMaster?: boolean;
+  equipped: boolean;
+  locked: boolean;
+  buying: boolean;
+  isAdmin: boolean;
+  onBuy: () => void;
 }) {
-  const canActivate = forceMaster ? true : owned;
-
   return (
-    <article className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/[0.06]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap gap-2">
-            <span className={cx("rounded-full border px-2.5 py-1 text-[10px] font-black tracking-[0.16em]", rarityBadgeClass(item.rarity))}>
-              {item.rarity}
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/65">
-              {item.vibe}
-            </span>
-            {active ? (
-              <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black text-emerald-200">
-                ACTIF
-              </span>
-            ) : null}
-            {owned && !active && !forceMaster ? (
-              <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black text-white/60">
-                POSSÉDÉ
-              </span>
-            ) : null}
-            {forceMaster ? (
-              <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2.5 py-1 text-[10px] font-black text-violet-200">
-                ETHER
-              </span>
-            ) : null}
-          </div>
-
-          <h3 className="mt-4 text-2xl font-black text-white">{item.name}</h3>
-          <p className="mt-2 text-sm leading-6 text-white/60">{item.description}</p>
-        </div>
-
-        <div className="grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/5">
-          {item.category === "name_fx" ? (
-            <Sparkles className="h-5 w-5 text-fuchsia-200" />
-          ) : item.category === "badge" ? (
-            <Gem className="h-5 w-5 text-cyan-200" />
-          ) : item.category === "title" ? (
-            <Zap className="h-5 w-5 text-rose-200" />
-          ) : (
-            <Wand2 className="h-5 w-5 text-violet-200" />
-          )}
-        </div>
-      </div>
-
-      <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
-        <div className="text-xs uppercase tracking-[0.22em] text-white/40">Preview</div>
-        {item.category === "name_fx" ? (
-          <div className={cx("mt-2 text-2xl font-black", item.previewClass || "text-white")}>Pseudo</div>
-        ) : item.category === "badge" ? (
-          <div className="mt-2"><span className={item.badgeClass || "text-white/70"}>{item.name}</span></div>
-        ) : (
-          <div className={cx("mt-2 text-xs font-black tracking-[0.22em] uppercase", item.previewClass || "text-white/70")}>
-            {item.titleText || item.name}
-          </div>
+    <div className="group relative overflow-hidden rounded-[28px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_18px_55px_rgba(0,0,0,0.28)]">
+      <div
+        className={cx(
+          "absolute inset-0 bg-gradient-to-br opacity-90",
+          previewTone(item.preview_style)
         )}
-      </div>
+      />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.10),transparent_35%)]" />
+      <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-3xl transition duration-500 group-hover:scale-125" />
 
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <div className="text-sm font-black text-white/80">{forceMaster ? "Réservé Maître" : `${item.price} crédits`}</div>
+      <div className="relative z-10">
+        <div className="rounded-[22px] border border-white/10 bg-black/30 p-5 backdrop-blur-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/36">
+                {item.item_key}
+              </div>
+              <div className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">
+                {item.title}
+              </div>
+            </div>
 
-        <div className="flex gap-2">
-          {!forceMaster && !owned ? (
-            <button
-              type="button"
-              onClick={onBuy}
-              disabled={busy}
-              className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2.5 text-sm font-black text-black hover:opacity-95 disabled:opacity-70"
-            >
-              <ShoppingBag className="h-4 w-4" /> Acheter
-            </button>
-          ) : active ? (
-            <button
-              type="button"
-              onClick={onDeactivate}
-              disabled={busy}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/15 disabled:opacity-60"
-            >
-              <X className="h-4 w-4" /> Off
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onActivate}
-              disabled={busy || !canActivate}
-              className={cx(
-                "inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-black transition disabled:opacity-60",
-                canActivate
-                  ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black hover:opacity-95"
-                  : "border border-white/10 bg-white/5 text-white/45 cursor-not-allowed"
-              )}
-            >
-              <Wand2 className="h-4 w-4" /> Activer
-            </button>
-          )}
+            <div className="flex flex-wrap gap-2">
+              <Tag tone={rarityTone(item.rarity)}>
+                {item.rarity || "standard"}
+              </Tag>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Tag tone="violet">{humanCategory(item.category)}</Tag>
+            <Tag>{itemSlot(item)}</Tag>
+            {itemVipRequired(item) ? <Tag tone="gold">VIP requis</Tag> : null}
+            {owned ? <Tag tone="green">possédé</Tag> : null}
+            {equipped ? <Tag tone="green">équipé</Tag> : null}
+            {isAdmin ? <Tag tone="red">admin</Tag> : null}
+          </div>
+
+          <p className="mt-4 min-h-[72px] text-sm leading-6 text-white/64">
+            {item.description || "Effet premium EtherCristal."}
+          </p>
+
+          <div className="mt-4 flex items-end gap-2">
+            <div className="text-3xl font-black tracking-[-0.05em] text-white">
+              {formatMoney(Number(item.price || 0))}
+            </div>
+            <div className="pb-1 text-sm text-white/44">achat</div>
+          </div>
+
+          <button
+            type="button"
+            disabled={buying || owned || locked}
+            onClick={onBuy}
+            className={cx(
+              "mt-5 inline-flex w-full items-center justify-center gap-2 rounded-[18px] border px-4 py-4 text-sm font-black uppercase tracking-[0.14em] transition",
+              buying || owned || locked
+                ? "border-white/10 bg-white/[0.05] text-white/42"
+                : "border-fuchsia-400/18 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/16"
+            )}
+          >
+            {buying ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Création...
+              </>
+            ) : owned ? (
+              <>
+                <Check className="h-4 w-4" />
+                Déjà possédé
+              </>
+            ) : locked ? (
+              <>
+                <Lock className="h-4 w-4" />
+                VIP requis
+              </>
+            ) : (
+              <>
+                <ShoppingBag className="h-4 w-4" />
+                Acheter
+              </>
+            )}
+          </button>
         </div>
       </div>
-    </article>
+    </div>
   );
 }
 
-function VipCard({ plan, credits, busy, onBuy }: { plan: ShopItem; credits: number; busy: boolean; onBuy: () => void }) {
-  const days = Number(plan.meta?.days ?? 0);
-  const affordable = credits >= plan.price;
+export default function BoutiquePage() {
+  const router = useRouter();
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [buyingKey, setBuyingKey] = useState<string | null>(null);
+
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [items, setItems] = useState<ShopItemRow[]>([]);
+  const [inventory, setInventory] = useState<InventoryRow[]>([]);
+  const [shopPurchases, setShopPurchases] = useState<ShopPurchaseRow[]>([]);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
+
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState<string>("all");
+
+  const [success, setSuccess] = useState("");
+  const [error, setError] = useState("");
+
+  const isAdmin = Boolean(profile?.is_admin);
+  const vipActive = isVipActive(profile);
+
+  const ownedKeys = useMemo(
+    () => new Set(inventory.map((row) => row.item_key)),
+    [inventory]
+  );
+
+  const equippedKeys = useMemo(
+    () =>
+      new Set(
+        inventory.filter((row) => row.equipped).map((row) => row.item_key)
+      ),
+    [inventory]
+  );
+
+  const categories = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        items
+          .map((item) => item.category)
+          .filter((value): value is string => Boolean(value && value.trim()))
+      )
+    );
+    return ["all", ...values];
+  }, [items]);
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return items.filter((item) => {
+      if (category !== "all" && item.category !== category) return false;
+
+      if (!q) return true;
+
+      return (
+        item.item_key.toLowerCase().includes(q) ||
+        String(item.title || "").toLowerCase().includes(q) ||
+        String(item.description || "").toLowerCase().includes(q) ||
+        String(item.category || "").toLowerCase().includes(q) ||
+        String(item.rarity || "").toLowerCase().includes(q)
+      );
+    });
+  }, [items, search, category]);
+
+  const latestPayment = payments[0] || null;
+
+  const loadPage = useCallback(
+    async (firstLoad = false) => {
+      try {
+        if (firstLoad) setLoading(true);
+        else setRefreshing(true);
+
+        setError("");
+
+        const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+          router.replace("/enter");
+          return;
+        }
+
+        const nextProfile = await ensureProfileRecord(user);
+
+        const [itemsRes, inventoryRes, purchasesRes, paymentsRes] =
+          await Promise.all([
+            supabase
+              .from("shop_items")
+              .select(
+                "id, item_key, title, description, price, category, rarity, preview_style, is_active, metadata"
+              )
+              .eq("is_active", true)
+              .order("price", { ascending: true }),
+            supabase
+              .from("inventory_items")
+              .select(
+                "id, user_id, item_key, item_type, equipped, meta, created_at, updated_at"
+              )
+              .eq("user_id", user.id)
+              .order("created_at", { ascending: false }),
+            supabase
+              .from("shop_purchases")
+              .select(
+                "id, user_id, payment_id, item_id, item_key, title, status, amount, currency, created_at, updated_at"
+              )
+              .eq("user_id", user.id)
+              .order("created_at", { ascending: false })
+              .limit(10),
+            supabase
+              .from("payments")
+              .select(
+                "id, user_id, purchase_type, item_key, amount, currency, status, provider, created_at, updated_at"
+              )
+              .eq("user_id", user.id)
+              .eq("purchase_type", "shop_item")
+              .order("created_at", { ascending: false })
+              .limit(10),
+          ]);
+
+        if (itemsRes.error) throw itemsRes.error;
+        if (inventoryRes.error) throw inventoryRes.error;
+        if (purchasesRes.error) throw purchasesRes.error;
+        if (paymentsRes.error) throw paymentsRes.error;
+
+        const cleanItems = ((itemsRes.data || []) as Partial<ShopItemRow>[])
+          .filter(
+            (row) =>
+              row &&
+              typeof row.item_key === "string" &&
+              row.item_key.trim().length > 0
+          )
+          .map((row) => ({
+            id: row.id ?? row.item_key!.trim(),
+            item_key: row.item_key!.trim(),
+            title: row.title?.trim() || row.item_key!.trim(),
+            description: row.description ?? "",
+            price: Number(row.price ?? 0),
+            category: row.category ?? "effect",
+            rarity: row.rarity ?? "standard",
+            preview_style: row.preview_style ?? null,
+            is_active: row.is_active ?? true,
+            metadata: row.metadata ?? {},
+          })) as ShopItemRow[];
+
+        setProfile(nextProfile);
+        setItems(cleanItems);
+        setInventory((inventoryRes.data || []) as InventoryRow[]);
+        setShopPurchases((purchasesRes.data || []) as ShopPurchaseRow[]);
+        setPayments((paymentsRes.data || []) as PaymentRow[]);
+      } catch (err: any) {
+        setError(err?.message || "Impossible de charger la boutique.");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [router]
+  );
+
+  useEffect(() => {
+    void loadPage(true);
+  }, [loadPage]);
+
+  const handleCreateShopPayment = useCallback(
+    async (item: ShopItemRow) => {
+      try {
+        setBuyingKey(item.item_key);
+        setError("");
+        setSuccess("");
+
+        if (ownedKeys.has(item.item_key)) {
+          throw new Error("Cet item est déjà dans ton inventaire.");
+        }
+
+        if (itemVipRequired(item) && !vipActive && !isAdmin) {
+          throw new Error("Cet item est réservé aux membres VIP.");
+        }
+
+        const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError || !session?.access_token) {
+          throw new Error("Session utilisateur introuvable.");
+        }
+
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+        if (!supabaseUrl || !anonKey) {
+          throw new Error("Variables publiques Supabase manquantes.");
+        }
+
+        const response = await fetch(
+          `${supabaseUrl}/functions/v1/create-payment-session`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+              apikey: anonKey,
+            },
+            body: JSON.stringify({
+              purchaseType: "shop_item",
+              amount: Number(item.price || 0),
+              currency: "CAD",
+              itemKey: item.item_key,
+              metadata: {
+                title: item.title,
+                category: item.category,
+                rarity: item.rarity,
+                slot: itemSlot(item),
+                vipRequired: itemVipRequired(item),
+                source: "boutique-page",
+              },
+            }),
+          }
+        );
+
+        const result = (await response.json()) as SessionResult;
+
+        if (!response.ok) {
+          throw new Error(
+            result?.error || "Impossible de créer la session d'achat."
+          );
+        }
+
+        setSuccess(
+          result?.checkoutUrl
+            ? `Session créée. Payment ID: ${result.paymentId}. URL de sortie: ${result.checkoutUrl}`
+            : `Session créée. Payment ID: ${result.paymentId}.`
+        );
+
+        await loadPage(false);
+      } catch (err: any) {
+        setError(err?.message || "Impossible de créer le paiement shop.");
+      } finally {
+        setBuyingKey(null);
+      }
+    },
+    [ownedKeys, vipActive, isAdmin, loadPage]
+  );
+
+  if (loading) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.22),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
+        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <Loader2 className="h-10 w-10 animate-spin text-red-200" />
+          </div>
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            EtherCristal Boutique
+          </div>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Chargement...
+          </h1>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <article className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <span className={cx("rounded-full border px-2.5 py-1 text-[10px] font-black tracking-[0.16em]", rarityBadgeClass(plan.rarity))}>
-            {plan.rarity}
-          </span>
-          <h3 className="mt-4 text-2xl font-black text-white">{plan.name}</h3>
-          <p className="mt-2 text-sm leading-6 text-white/60">{plan.description}</p>
+    <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+      <div className="relative min-h-screen lg:pl-[290px]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+          <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+          <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
         </div>
 
-        <div className="grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/5">
-          <Crown className="h-5 w-5 text-amber-200" />
+        <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+          <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <Menu className="h-4 w-4" />
+              Menu
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void loadPage(false)}
+              className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <RefreshCw
+                className={cx("h-4 w-4", refreshing && "animate-spin")}
+              />
+              Refresh
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-[32px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)] sm:p-8">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
+
+              <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                    catalogue premium
+                  </div>
+
+                  <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-white md:text-5xl">
+                    Boutique
+                  </h1>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                    <span className="font-black text-white">
+                      {profileDisplayName(profile)}
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      crédits{" "}
+                      <span className="font-black text-white">
+                        {profile?.credits ?? 0}
+                      </span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      inventaire{" "}
+                      <span className="font-black text-white">
+                        {inventory.length}
+                      </span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      VIP{" "}
+                      <span className="font-black text-white">
+                        {isAdmin ? "ADMIN" : vipActive ? "ACTIF" : "NON"}
+                      </span>
+                    </span>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {isAdmin ? <Tag tone="red">admin</Tag> : null}
+                    {vipActive ? (
+                      <Tag tone="gold">vip actif</Tag>
+                    ) : (
+                      <Tag>membre standard</Tag>
+                    )}
+                    {profile?.master_title ? (
+                      <Tag tone="violet">{profile.master_title}</Tag>
+                    ) : null}
+                    {profile?.active_name_fx_key ? (
+                      <Tag tone="green">{profile.active_name_fx_key}</Tag>
+                    ) : null}
+                  </div>
+
+                  <p className="mt-5 max-w-3xl text-sm leading-7 text-white/58">
+                    Catalogue réel, inventaire réel, achats réels. Cette page
+                    ne montre plus de faux items.
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void loadPage(false)}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-red-500/12 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-red-900/16"
+                  >
+                    <RefreshCw
+                      className={cx("h-4 w-4", refreshing && "animate-spin")}
+                    />
+                    Actualiser
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/inventaire")}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-white/[0.07]"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Inventaire
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {error ? (
+              <div className="rounded-[20px] border border-red-400/20 bg-red-500/10 px-4 py-4 text-sm text-red-100">
+                {error}
+              </div>
+            ) : null}
+
+            {success ? (
+              <div className="rounded-[20px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-4 text-sm text-emerald-100">
+                {success}
+              </div>
+            ) : null}
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <Stat
+                label="catalogue"
+                value={items.length}
+                icon={<ShoppingBag className="h-4 w-4" />}
+              />
+              <Stat
+                label="possédés"
+                value={inventory.length}
+                icon={<Gem className="h-4 w-4" />}
+              />
+              <Stat
+                label="équipés"
+                value={inventory.filter((item) => item.equipped).length}
+                icon={<Sparkles className="h-4 w-4" />}
+              />
+              <Stat
+                label="paiements"
+                value={payments.length}
+                icon={<Wallet className="h-4 w-4" />}
+              />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+              <Card
+                title="Catalogue"
+                right={<Tag tone="gold">{filteredItems.length} items</Tag>}
+              >
+                <div className="mb-5 grid gap-4 xl:grid-cols-[1fr_auto]">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Chercher un item..."
+                      className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-12 py-4 text-sm text-white outline-none placeholder:text-white/28"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map((value) => (
+                      <button
+                        key={String(value)}
+                        type="button"
+                        onClick={() => setCategory(value)}
+                        className={cx(
+                          "rounded-[16px] border px-4 py-3 text-sm font-black uppercase tracking-[0.14em] transition",
+                          category === value
+                            ? "border-red-400/18 bg-red-500/10 text-red-100"
+                            : "border-white/10 bg-white/[0.04] text-white/70"
+                        )}
+                      >
+                        {value === "all" ? "tout" : humanCategory(value)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {filteredItems.length === 0 ? (
+                  <div className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/48">
+                    Aucun item trouvé.
+                  </div>
+                ) : (
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    {filteredItems.map((item) => (
+                      <ShopItemCard
+                        key={String(item.id ?? item.item_key)}
+                        item={item}
+                        owned={ownedKeys.has(item.item_key)}
+                        equipped={equippedKeys.has(item.item_key)}
+                        locked={itemVipRequired(item) && !vipActive && !isAdmin}
+                        buying={buyingKey === item.item_key}
+                        isAdmin={isAdmin}
+                        onBuy={() => void handleCreateShopPayment(item)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <div className="space-y-6">
+                <Card
+                  title="Compte boutique"
+                  right={<Tag tone="violet">résumé</Tag>}
+                >
+                  <div className="grid gap-3">
+                    <Row label="membre" value={profileDisplayName(profile)} />
+                    <Row label="rôle" value={profile?.role || "member"} />
+                    <Row label="crédits" value={profile?.credits ?? 0} />
+                    <Row label="VIP actif" value={vipActive ? "Oui" : "Non"} />
+                    <Row label="items possédés" value={inventory.length} />
+                    <Row
+                      label="items équipés"
+                      value={inventory.filter((item) => item.equipped).length}
+                    />
+                    <Row
+                      label="badge actif"
+                      value={profile?.active_badge_key || "Aucun"}
+                    />
+                    <Row
+                      label="titre actif"
+                      value={profile?.active_title_key || "Aucun"}
+                    />
+                  </div>
+                </Card>
+
+                <Card
+                  title="Dernier paiement shop"
+                  right={<Tag tone="violet">trace</Tag>}
+                >
+                  {latestPayment ? (
+                    <div className="grid gap-3">
+                      <Row
+                        label="montant"
+                        value={formatMoney(
+                          Number(latestPayment.amount || 0),
+                          latestPayment.currency
+                        )}
+                      />
+                      <Row label="item" value={latestPayment.item_key || "—"} />
+                      <Row label="statut" value={latestPayment.status} />
+                      <Row label="provider" value={latestPayment.provider} />
+                      <Row label="créé" value={formatDate(latestPayment.created_at)} />
+                    </div>
+                  ) : (
+                    <div className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/52">
+                      Aucun paiement shop enregistré.
+                    </div>
+                  )}
+                </Card>
+
+                <Card
+                  title="Achats validés"
+                  right={<Tag>{shopPurchases.length} lignes</Tag>}
+                >
+                  {shopPurchases.length === 0 ? (
+                    <div className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/48">
+                      Aucun achat validé.
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      {shopPurchases.map((purchase) => (
+                        <div
+                          key={String(purchase.id)}
+                          className="rounded-[18px] border border-white/8 bg-black/20 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-lg font-black text-white">
+                                {purchase.title}
+                              </div>
+                              <div className="mt-1 text-xs text-white/42">
+                                {purchase.item_key || "item inconnu"}
+                              </div>
+                            </div>
+
+                            <Tag
+                              tone={
+                                purchase.status === "paid"
+                                  ? "green"
+                                  : purchase.status === "pending"
+                                  ? "gold"
+                                  : purchase.status === "refunded"
+                                  ? "violet"
+                                  : "red"
+                              }
+                            >
+                              {purchase.status}
+                            </Tag>
+                          </div>
+
+                          <div className="mt-4 grid gap-3">
+                            <Row
+                              label="montant"
+                              value={formatMoney(
+                                Number(purchase.amount || 0),
+                                purchase.currency
+                              )}
+                            />
+                            <Row label="date" value={formatDate(purchase.created_at)} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+
+            <Card title="Inventaire rapide" right={<Tag>{inventory.length} items</Tag>}>
+              {inventory.length === 0 ? (
+                <div className="rounded-[18px] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/48">
+                  Ton inventaire est vide.
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {inventory.map((item) => (
+                    <div
+                      key={String(item.id ?? item.item_key)}
+                      className="rounded-[18px] border border-white/8 bg-black/20 p-4"
+                    >
+                      <div className="flex flex-wrap gap-2">
+                        <Tag tone="violet">{item.item_key}</Tag>
+                        {item.equipped ? (
+                          <Tag tone="green">équipé</Tag>
+                        ) : (
+                          <Tag>stocké</Tag>
+                        )}
+                      </div>
+
+                      <div className="mt-3 text-sm text-white/56">
+                        Type: {item.item_type || "effect"}
+                      </div>
+
+                      <div className="mt-2 text-xs text-white/36">
+                        Ajouté: {formatDate(item.created_at)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
         </div>
       </div>
-
-      <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
-        <div className="text-xs uppercase tracking-[0.22em] text-white/40">Durée</div>
-        <div className="mt-2 text-xl font-black text-white">{days} jours</div>
-      </div>
-
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <div className="text-sm font-black text-white/80">{plan.price} crédits</div>
-
-        <button
-          type="button"
-          onClick={onBuy}
-          disabled={busy || !affordable}
-          className={cx(
-            "inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-black transition",
-            affordable
-              ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black hover:opacity-95"
-              : "border border-white/10 bg-white/5 text-white/45 cursor-not-allowed",
-            busy && "opacity-70"
-          )}
-        >
-          <Crown className="h-4 w-4" />
-          {busy ? "..." : affordable ? "Activer VIP" : "Crédits insuffisants"}
-        </button>
-      </div>
-    </article>
+    </div>
   );
 }

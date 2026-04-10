@@ -1,914 +1,707 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useParams, useRouter } from "next/navigation";
+import Sidebar from "@/components/Sidebar";
+import { supabase } from "@/lib/supabase";
+import {
   Camera,
   CameraOff,
-  ChevronDown,
-  ChevronUp,
-  DoorOpen,
+  Menu,
   Mic,
   MicOff,
   RefreshCw,
-  Send,
+  Shield,
   Users,
-  Wand2,
+  Video,
   X,
-  Check,
-  AlertTriangle,
 } from "lucide-react";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import ProfileName, { DisplayProfile } from "@/components/ProfileName";
 
-const supabase = requireSupabaseBrowserClient();
+type ProfileRow = {
+  id: string;
+  pseudo?: string | null;
+  is_admin?: boolean | null;
+};
 
-type PresenceRow = {
+type RoomRow = {
+  id: string;
+  slug?: string | null;
+  name?: string | null;
+  description?: string | null;
+  is_live?: boolean | null;
+  is_vip?: boolean | null;
+  members_count?: number | null;
+  max_members?: number | null;
+  max_visible_slots?: number | null;
+};
+
+type RoomMemberRow = {
   id: string;
   room_id: string;
   user_id: string;
   pseudo?: string | null;
+  slot_number?: number | null;
+  cam_enabled?: boolean | null;
+  mic_enabled?: boolean | null;
   updated_at?: string | null;
-  joined_at?: string | null;
-  slot_index?: number | null;
 };
 
-type RoomMessageRow = {
-  id: string;
-  room_id: string;
-  user_id: string;
-  pseudo?: string | null;
-  content: string;
-  created_at?: string | null;
-};
+type FlashState =
+  | {
+      tone: "success" | "error";
+      text: string;
+    }
+  | null;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function parseTime(s?: string | null) {
-  if (!s) return 0;
-  const t = new Date(s).getTime();
-  return Number.isNaN(t) ? 0 : t;
+function FlashBanner({ flash }: { flash: FlashState }) {
+  if (!flash) return null;
+
+  return (
+    <div
+      className={cx(
+        "rounded-[22px] border px-4 py-4 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.24)]",
+        flash.tone === "success"
+          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+          : "border-red-400/20 bg-red-500/10 text-red-100"
+      )}
+    >
+      {flash.text}
+    </div>
+  );
 }
 
-function isOnline(updated_at?: string | null) {
-  const t = parseTime(updated_at);
-  return t > 0 && Date.now() - t < 60_000;
+function Tag({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "red" | "green" | "gold";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-400/20 bg-red-500/10 text-red-100"
+      : tone === "green"
+      ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+      : tone === "gold"
+      ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
+      : "border-white/10 bg-white/[0.04] text-white/70";
+
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em]",
+        toneClass
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
-function slotLabel(n: number) {
-  return n <= 6 ? `Place ${n}` : `Extra ${n - 6}`;
+function SlotCard({
+  slotNumber,
+  member,
+  isSelf,
+  camOn,
+  localVideoRef,
+}: {
+  slotNumber: number;
+  member?: RoomMemberRow;
+  isSelf: boolean;
+  camOn: boolean;
+  localVideoRef: React.RefObject<HTMLVideoElement | null>;
+}) {
+  const hasMember = Boolean(member);
+
+  return (
+    <div className="relative overflow-hidden rounded-[24px] border border-red-500/12 bg-[#0d0d12] shadow-[0_16px_45px_rgba(0,0,0,0.28)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.05),transparent_35%),linear-gradient(135deg,rgba(190,20,20,0.08),rgba(255,0,90,0.05),rgba(255,255,255,0.01))]" />
+
+      <div className="relative z-10">
+        <div className="flex items-center justify-between border-b border-red-500/10 px-4 py-3">
+          <div className="text-[10px] font-black uppercase tracking-[0.20em] text-red-100/36">
+            Slot {slotNumber}
+          </div>
+
+          {hasMember ? (
+            <div className="flex items-center gap-2">
+              {member?.cam_enabled ? <Tag tone="red">Cam</Tag> : <Tag>Présent</Tag>}
+              {member?.mic_enabled ? <Tag tone="green">Mic</Tag> : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="relative aspect-video bg-black/40">
+          {isSelf && camOn ? (
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="h-full w-full object-cover scale-x-[-1]"
+            />
+          ) : hasMember ? (
+            <div className="grid h-full place-items-center px-4 text-center">
+              <div>
+                <div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] border border-red-500/12 bg-red-950/12">
+                  <Video className="h-6 w-6 text-white/80" />
+                </div>
+                <div className="mt-4 text-base font-black text-white">
+                  {member?.pseudo || "Membre"}
+                </div>
+                <div className="mt-2 text-xs uppercase tracking-[0.14em] text-white/40">
+                  {isSelf ? "Toi" : member?.cam_enabled ? "Cam active" : "En attente vidéo"}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid h-full place-items-center px-4 text-center">
+              <div>
+                <div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] border border-white/8 bg-white/[0.03]">
+                  <X className="h-6 w-6 text-white/26" />
+                </div>
+                <div className="mt-4 text-sm font-black uppercase tracking-[0.14em] text-white/28">
+                  Libre
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-red-500/10 px-4 py-3 text-sm text-white/65">
+          {hasMember ? (member?.pseudo || "Membre") : "Emplacement disponible"}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function formatMsgTime(ts?: string | null) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
-}
-
-export default function RoomPage() {
-  const params = useParams();
+export default function SalonRoomPage() {
   const router = useRouter();
-  const roomId = String(params?.roomId ?? "");
+  const params = useParams();
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const chatBoxRef = useRef<HTMLDivElement | null>(null);
+  const roomId = String(params.roomId || "");
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const [presence, setPresence] = useState<PresenceRow[]>([]);
-  const [messages, setMessages] = useState<RoomMessageRow[]>([]);
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [room, setRoom] = useState<RoomRow | null>(null);
+  const [members, setMembers] = useState<RoomMemberRow[]>([]);
+  const [flash, setFlash] = useState<FlashState>(null);
 
-  const [myUserId, setMyUserId] = useState<string>("");
-  const [myProfile, setMyProfile] = useState<DisplayProfile | null>(null);
+  const [mySlot, setMySlot] = useState<number | null>(null);
+  const [camOn, setCamOn] = useState(false);
+  const [micOn, setMicOn] = useState(false);
+  const [startingCam, setStartingCam] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  // Cache profils (présence + chat)
-  const [profilesById, setProfilesById] = useState<Record<string, DisplayProfile>>({});
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+  const primarySlots = useMemo(() => [1, 2, 3, 4, 5, 6], []);
+  const secondarySlots = useMemo(() => [7, 8, 9, 10, 11, 12], []);
 
-  const [cam, setCam] = useState(true);
-  const [mic, setMic] = useState(true);
-
-  const [showExtras, setShowExtras] = useState(false);
-
-  const [chat, setChat] = useState("");
-  const [sending, setSending] = useState(false);
-
-  const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
-
-  // Modal confirmation slot
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingSlot, setPendingSlot] = useState<number | null>(null);
-  const [confirmBusy, setConfirmBusy] = useState(false);
-
-  // ---------- AUTH ----------
-  async function getAuthedUserOrRedirect() {
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error || !user) {
-      router.push("/enter");
-      return null;
+  const membersBySlot = useMemo(() => {
+    const map = new Map<number, RoomMemberRow>();
+    for (const member of members) {
+      if (member.slot_number) {
+        map.set(member.slot_number, member);
+      }
     }
-    return user;
-  }
+    return map;
+  }, [members]);
 
-  // ---------- LOADERS ----------
-  async function loadPresence() {
-    const { data, error } = await supabase
-      .from("room_presence")
-      .select("id, room_id, user_id, pseudo, updated_at, joined_at, slot_index")
-      .eq("room_id", roomId);
+  const isAdmin = Boolean(profile?.is_admin);
+  const shouldShowExtension = members.length > 6;
 
-    if (error) return;
-    const rows = (data ?? []) as PresenceRow[];
-    setPresence(rows);
-
-    // Batch fetch profiles for online users (slots + list)
-    const online = rows.filter((p) => isOnline(p.updated_at));
-    const ids = Array.from(new Set(online.map((p) => p.user_id).filter(Boolean)));
-    await ensureProfilesLoaded(ids);
-  }
-
-  async function loadMessages() {
-    const { data, error } = await supabase
-      .from("room_messages")
-      .select("id, room_id, user_id, pseudo, content, created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true })
-      .limit(200);
-
-    if (error) return;
-
-    const rows = (data ?? []) as RoomMessageRow[];
-    setMessages(rows);
-
-    const ids = Array.from(new Set(rows.map((m) => m.user_id).filter(Boolean)));
-    await ensureProfilesLoaded(ids);
-  }
-
-  async function refreshAll() {
-    setRefreshing(true);
-    setError("");
-    setInfo("");
-    try {
-      await Promise.all([loadPresence(), loadMessages()]);
-    } finally {
-      setRefreshing(false);
+  const stopLocalMedia = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-  }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+  }, []);
 
-  // ---------- PROFILES CACHE ----------
-  async function ensureProfilesLoaded(userIds: string[]) {
-    const missing = userIds.filter((id) => id && !profilesById[id]);
-    if (missing.length === 0) return;
+  const loadRoom = useCallback(async () => {
+    const activeCutoff = new Date(Date.now() - 45_000).toISOString();
 
-    const { data, error } = await supabase
-      .from("profiles")
+    const { data: roomRes, error: roomError } = await supabase
+      .from("rooms")
       .select(
-        "id, pseudo, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style, is_admin, role"
+        "id, slug, name, description, is_live, is_vip, members_count, max_members, max_visible_slots"
       )
-      .in("id", missing);
+      .eq("id", roomId)
+      .maybeSingle();
 
-    if (error) return;
+    if (roomError) throw roomError;
 
-    const next: Record<string, DisplayProfile> = {};
-    for (const row of data ?? []) {
-      next[(row as any).id] = row as any;
-    }
+    const { data: membersRes, error: membersError } = await supabase
+      .from("room_members")
+      .select(
+        "id, room_id, user_id, pseudo, slot_number, cam_enabled, mic_enabled, updated_at"
+      )
+      .eq("room_id", roomId)
+      .gte("updated_at", activeCutoff)
+      .order("slot_number", { ascending: true });
 
-    setProfilesById((prev) => ({ ...prev, ...next }));
-  }
+    if (membersError) throw membersError;
 
-  // ---------- CAMERA ----------
-  async function ensureCamStream() {
-    if (videoRef.current?.srcObject) return;
+    setRoom((roomRes as RoomRow | null) ?? null);
+    setMembers((membersRes as RoomMemberRow[] | null) ?? []);
+  }, [roomId]);
+
+  const syncFlags = useCallback(
+    async (nextCam: boolean, nextMic: boolean) => {
+      if (!profile) return;
+
+      await supabase
+        .from("room_members")
+        .update({
+          cam_enabled: nextCam,
+          mic_enabled: nextMic,
+        })
+        .eq("room_id", roomId)
+        .eq("user_id", profile.id);
+    },
+    [profile, roomId]
+  );
+
+  const enableCamera = useCallback(async () => {
+    setStartingCam(true);
+    setFlash(null);
 
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Caméra non supportée sur cet appareil.");
+      }
+
+      stopLocalMedia();
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
 
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      streamRef.current = stream;
 
-      stream.getVideoTracks().forEach((t) => (t.enabled = cam));
-      stream.getAudioTracks().forEach((t) => (t.enabled = mic));
-    } catch {
-      setError("Impossible d'accéder à la caméra ou au micro.");
-    }
-  }
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
 
-  function stopCamStream() {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    stream?.getTracks().forEach((t) => t.stop());
-    if (videoRef.current) videoRef.current.srcObject = null;
-  }
-
-  function toggleCam() {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    if (!stream) return;
-    const next = !cam;
-    stream.getVideoTracks().forEach((t) => (t.enabled = next));
-    setCam(next);
-  }
-
-  function toggleMic() {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    if (!stream) return;
-    const next = !mic;
-    stream.getAudioTracks().forEach((t) => (t.enabled = next));
-    setMic(next);
-  }
-
-  // ---------- PRESENCE / SLOT ----------
-  async function leavePresence() {
-    const user = await getAuthedUserOrRedirect();
-    if (!user || !roomId) return;
-
-    await supabase
-      .from("room_presence")
-      .delete()
-      .eq("room_id", roomId)
-      .eq("user_id", user.id);
-  }
-
-  async function joinSlot(slot: number) {
-    setError("");
-    setInfo("");
-
-    if (!roomId) return;
-
-    const user = await getAuthedUserOrRedirect();
-    if (!user) return;
-
-    await ensureCamStream();
-
-    const { data: existing } = await supabase
-      .from("room_presence")
-      .select("id")
-      .eq("room_id", roomId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!existing?.id) {
-      const { error: insErr } = await supabase.from("room_presence").insert({
-        room_id: roomId,
-        user_id: user.id,
-        pseudo: myProfile?.pseudo || "Membre",
-        slot_index: null,
-        updated_at: new Date().toISOString(),
+      setCamOn(true);
+      setMicOn(true);
+      await syncFlags(true, true);
+    } catch (e: any) {
+      setFlash({
+        tone: "error",
+        text: e?.message || "Impossible d’activer la caméra.",
       });
-
-      if (insErr) {
-        setError(insErr.message);
-        return;
-      }
+    } finally {
+      setStartingCam(false);
     }
+  }, [stopLocalMedia, syncFlags]);
 
-    const { error: updErr } = await supabase
-      .from("room_presence")
-      .update({
-        slot_index: slot,
-        pseudo: myProfile?.pseudo || "Membre",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("room_id", roomId)
-      .eq("user_id", user.id);
-
-    if (updErr) {
-      const anyErr = updErr as any;
-      if (anyErr?.code === "23505") setError("Cette place est déjà occupée.");
-      else setError(updErr.message);
-      return;
-    }
-
-    setSelectedSlot(slot);
-    setInfo(`Tu es maintenant sur ${slotLabel(slot)}.`);
-    await loadPresence();
+  async function disableCamera() {
+    stopLocalMedia();
+    setCamOn(false);
+    setMicOn(false);
+    await syncFlags(false, false);
   }
 
-  async function leaveSlotOnly() {
-    setError("");
-    setInfo("");
+  async function toggleMic() {
+    if (!streamRef.current) return;
 
-    if (!roomId) return;
+    const next = !micOn;
+    const track = streamRef.current.getAudioTracks()[0];
+    if (track) track.enabled = next;
 
-    const user = await getAuthedUserOrRedirect();
-    if (!user) return;
-
-    const { data: existing } = await supabase
-      .from("room_presence")
-      .select("id")
-      .eq("room_id", roomId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!existing?.id) {
-      setSelectedSlot(null);
-      stopCamStream();
-      return;
-    }
-
-    const { error } = await supabase
-      .from("room_presence")
-      .update({ slot_index: null, updated_at: new Date().toISOString() })
-      .eq("id", existing.id);
-
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    setSelectedSlot(null);
-    setInfo("Tu as quitté ton emplacement.");
-    stopCamStream();
-    await loadPresence();
+    setMicOn(next);
+    await syncFlags(camOn, next);
   }
 
-  // ---------- MODAL CONFIRM ----------
-  function requestJoinSlot(slot: number) {
-    setError("");
-    setInfo("");
-    setPendingSlot(slot);
-    setConfirmOpen(true);
-  }
-
-  function closeModal() {
-    setConfirmOpen(false);
-    setPendingSlot(null);
-    setConfirmBusy(false);
-  }
-
-  async function confirmJoin() {
-    if (!pendingSlot) return;
-    setConfirmBusy(true);
-    await joinSlot(pendingSlot);
-    setConfirmBusy(false);
-    closeModal();
-  }
-
-  async function requestAuto() {
-    setError("");
-    setInfo("");
-
-    const { data, error } = await supabase
-      .from("room_presence")
-      .select("slot_index")
-      .eq("room_id", roomId);
-
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    const taken = new Set<number>();
-    for (const row of data ?? []) {
-      const n = (row as any).slot_index ?? null;
-      if (n && n >= 1 && n <= 12) taken.add(n);
-    }
-
-    const firstFree = Array.from({ length: 12 }, (_, i) => i + 1).find((n) => !taken.has(n));
-    if (!firstFree) {
-      setError("Aucune place libre.");
-      return;
-    }
-
-    requestJoinSlot(firstFree);
-  }
-
-  // ---------- INIT ----------
   useEffect(() => {
-    if (!roomId) {
-      router.push("/salons");
-      return;
+    let mounted = true;
+    let heartbeatInterval: number | null = null;
+    let refreshInterval: number | null = null;
+
+    async function boot() {
+      try {
+        setLoading(true);
+        setFlash(null);
+
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+          router.replace("/enter");
+          return;
+        }
+
+        const { data: profileRes, error: profileError } = await supabase
+          .from("profiles")
+          .select("id, pseudo, is_admin")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError) throw profileError;
+
+        const currentProfile = (profileRes as ProfileRow | null) ?? null;
+        if (!currentProfile) {
+          throw new Error("Profil introuvable.");
+        }
+
+        if (!mounted) return;
+        setProfile(currentProfile);
+
+        const { data: joinRes, error: joinError } = await supabase.rpc("join_room", {
+          p_room_id: roomId,
+          p_pseudo: currentProfile.pseudo || "Membre",
+        });
+
+        if (joinError) {
+          const msg =
+            joinError.message === "ROOM_FULL"
+              ? "Salle complète."
+              : joinError.message === "ROOM_NOT_FOUND"
+              ? "Salle introuvable."
+              : joinError.message || "Impossible de rejoindre la salle.";
+          throw new Error(msg);
+        }
+
+        const slot =
+          Array.isArray(joinRes) && joinRes[0]?.slot_number
+            ? Number(joinRes[0].slot_number)
+            : null;
+
+        if (!mounted) return;
+        setMySlot(slot);
+
+        await loadRoom();
+
+        heartbeatInterval = window.setInterval(async () => {
+          try {
+            await supabase.rpc("heartbeat_room", { p_room_id: roomId });
+          } catch {}
+        }, 20000);
+
+        refreshInterval = window.setInterval(async () => {
+          try {
+            await loadRoom();
+          } catch {}
+        }, 4000);
+      } catch (e: any) {
+        if (!mounted) return;
+        setFlash({
+          tone: "error",
+          text: e?.message || "Impossible de charger la salle.",
+        });
+      } finally {
+        if (mounted) setLoading(false);
+      }
     }
 
-    let mounted = true;
-
-    (async () => {
-      setLoading(true);
-      setError("");
-      setInfo("");
-
-      const user = await getAuthedUserOrRedirect();
-      if (!user) return;
-
-      setMyUserId(user.id);
-
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select(
-          "id, pseudo, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style, is_admin, role"
-        )
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const mine = (profile as any) as DisplayProfile | null;
-      if (mounted) setMyProfile(mine);
-
-      if (mine && (mine as any).id) {
-        setProfilesById((prev) => ({ ...prev, [(mine as any).id]: mine }));
-      }
-
-      await supabase.from("room_presence").upsert(
-        {
-          room_id: roomId,
-          user_id: user.id,
-          pseudo: mine?.pseudo || "Membre",
-          slot_index: null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "room_id,user_id" }
-      );
-
-      await Promise.all([loadPresence(), loadMessages()]);
-
-      const { data: pres } = await supabase
-        .from("room_presence")
-        .select("slot_index")
-        .eq("room_id", roomId)
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      const restored =
-        pres?.slot_index && pres.slot_index >= 1 && pres.slot_index <= 12 ? pres.slot_index : null;
-
-      if (mounted) setSelectedSlot(restored);
-
-      if (restored) await ensureCamStream();
-
-      setLoading(false);
-    })();
+    boot();
 
     return () => {
       mounted = false;
+
+      if (heartbeatInterval) window.clearInterval(heartbeatInterval);
+      if (refreshInterval) window.clearInterval(refreshInterval);
+
+      stopLocalMedia();
+
+      if (roomId) {
+        void supabase.rpc("leave_room", { p_room_id: roomId });
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [loadRoom, roomId, router, stopLocalMedia]);
 
-  // ---------- SUBSCRIPTIONS ----------
-  useEffect(() => {
-    if (!roomId) return;
-
-    const presenceChannel = supabase
-      .channel(`room_presence_${roomId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "room_presence", filter: `room_id=eq.${roomId}` },
-        () => loadPresence()
-      )
-      .subscribe();
-
-    const messagesChannel = supabase
-      .channel(`room_messages_${roomId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
-        async (payload) => {
-          const row = payload.new as RoomMessageRow;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === row.id)) return prev;
-            const next = [...prev, row];
-            return next.length > 200 ? next.slice(next.length - 200) : next;
-          });
-
-          if (row.user_id) {
-            await ensureProfilesLoaded([row.user_id]);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(presenceChannel);
-      supabase.removeChannel(messagesChannel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, profilesById]);
-
-  // ---------- HEARTBEAT ----------
-  useEffect(() => {
-    if (!roomId) return;
-
-    const t = setInterval(async () => {
-      const user = await supabase.auth.getUser();
-      const uid = user.data.user?.id;
-      if (!uid) return;
-
-      supabase
-        .from("room_presence")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("room_id", roomId)
-        .eq("user_id", uid);
-    }, 20_000);
-
-    return () => clearInterval(t);
-  }, [roomId]);
-
-  // ---------- CHAT AUTOSCROLL ----------
-  useEffect(() => {
-    chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages.length]);
-
-  // ---------- DERIVED ----------
-  const onlinePresence = useMemo(() => presence.filter((p) => isOnline(p.updated_at)), [presence]);
-  const onlineCount = onlinePresence.length;
-
-  const slotsAll = useMemo(() => {
-    return Array.from({ length: 12 }, (_, i) => {
-      const slotId = i + 1;
-      const member = onlinePresence.find((p) => p.slot_index === slotId) || null;
-      return { id: slotId, member };
-    });
-  }, [onlinePresence]);
-
-  const slots = useMemo(() => (showExtras ? slotsAll : slotsAll.slice(0, 6)), [slotsAll, showExtras]);
-
-  // ---------- SEND MESSAGE ----------
-  async function sendMessage() {
-    setError("");
-    const content = chat.trim();
-    if (!content) return;
-
-    const user = await getAuthedUserOrRedirect();
-    if (!user) return;
-
-    setSending(true);
-
-    const { error } = await supabase.from("room_messages").insert({
-      room_id: roomId,
-      user_id: user.id,
-      pseudo: myProfile?.pseudo || "Membre",
-      content,
-    });
-
-    setSending(false);
-
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    setChat("");
+  if (loading) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(120,40,200,0.08),transparent_24%),linear-gradient(180deg,#040405_0%,#07070a_100%)]" />
+        <div className="relative w-full max-w-md rounded-[32px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
+          </div>
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            EtherCristal
+          </div>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Chargement de la salle...
+          </h1>
+        </div>
+      </div>
+    );
   }
 
-  // ---------- CLEANUP ----------
-  useEffect(() => {
-    return () => {
-      stopCamStream();
-      if (roomId) leavePresence();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
-
-  const isChanging = selectedSlot && pendingSlot && pendingSlot !== selectedSlot;
-
   return (
-    <div className="relative min-h-screen p-4 sm:p-6 space-y-4 text-white">
-      {/* Modal */}
-      {confirmOpen ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeModal} />
-          <div className="relative w-full max-w-md rounded-[28px] border border-white/10 bg-zinc-950/80 p-6 shadow-[0_30px_90px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-xs uppercase tracking-[0.22em] text-white/45">Confirmation</div>
+    <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-                {selectedSlot ? (
-                  <h2 className="mt-2 text-2xl font-black text-white">
-                    Changer de {slotLabel(selectedSlot)} → {pendingSlot ? slotLabel(pendingSlot) : "…"} ?
-                  </h2>
-                ) : (
-                  <h2 className="mt-2 text-2xl font-black text-white">
-                    Prendre {pendingSlot ? slotLabel(pendingSlot) : "cette place"} ?
-                  </h2>
-                )}
+      <div className="relative min-h-screen lg:pl-[290px]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+          <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+          <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
+        </div>
 
-                <p className="mt-2 text-sm leading-6 text-white/60">
-                  {selectedSlot
-                    ? "Tu vas quitter ta place actuelle et apparaître dans la nouvelle."
-                    : "Tu vas apparaître dans ce carré. Tu pourras changer plus tard."}
-                </p>
+        <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+          <div className="mb-8 flex items-center justify-between gap-4 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex items-center gap-3 rounded-[24px] border border-red-500/16 bg-red-950/12 px-6 py-4 text-sm font-black uppercase tracking-[0.25em] text-white shadow-[0_18px_50px_rgba(0,0,0,0.3)]"
+            >
+              <Menu className="h-5 w-5" />
+              Menu
+            </button>
 
-                {isChanging ? (
-                  <div className="mt-4 flex items-start gap-3 rounded-2xl border border-yellow-400/20 bg-yellow-500/10 p-4">
-                    <AlertTriangle className="mt-0.5 h-5 w-5 text-yellow-300" />
-                    <div className="text-sm text-yellow-200/90">
-                      Attention : tu changes d’emplacement. Tes réglages cam/mic restent, mais ta position bouge.
-                    </div>
+            <button
+              type="button"
+              onClick={() => loadRoom()}
+              disabled={syncing}
+              className="inline-flex items-center gap-2.5 rounded-[24px] border border-red-500/16 bg-red-950/12 px-6 py-4 text-sm font-black uppercase tracking-[0.25em] text-white shadow-[0_18px_50px_rgba(0,0,0,0.3)] disabled:opacity-50"
+            >
+              <RefreshCw className={cx("h-4 w-4", syncing && "animate-spin")} />
+              Actualiser
+            </button>
+          </div>
+
+          <div className="space-y-8">
+            <section className="relative overflow-hidden rounded-[34px] border border-red-500/16 bg-gradient-to-br from-red-950/14 via-black/28 to-fuchsia-950/10 p-8 shadow-[0_26px_90px_rgba(0,0,0,0.42)]">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
+
+              <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                    Salle webcam
                   </div>
+
+                  <h1 className="mt-3 text-5xl font-black tracking-[-0.05em] text-white md:text-6xl">
+                    {room?.name?.trim() || "Salon"}
+                  </h1>
+
+                  <p className="mt-4 max-w-3xl text-sm leading-7 text-white/62">
+                    {room?.description?.trim() || "Salle dynamique avec slots 1–6 puis extension 7–12."}
+                  </p>
+
+                  <div className="mt-6 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                    <span>
+                      Toi <span className="font-black text-white">{profile?.pseudo || "Membre"}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      Slot <span className="font-black text-white">{mySlot ?? "—"}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      Membres <span className="font-black text-white">{members.length}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      Capacité <span className="font-black text-white">{room?.max_members ?? 12}</span>
+                    </span>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {room?.is_live ? <Tag tone="red">Live</Tag> : <Tag>Off</Tag>}
+                    {room?.is_vip ? <Tag tone="gold">VIP</Tag> : null}
+                    {isAdmin ? <Tag tone="green">Admin</Tag> : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (camOn ? disableCamera() : enableCamera());
+                    }}
+                    disabled={startingCam}
+                    className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-5 py-4 text-sm font-black uppercase tracking-[0.16em] text-white/85 transition hover:bg-red-900/16 disabled:opacity-50"
+                  >
+                    {camOn ? <CameraOff className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
+                    {camOn ? "Couper cam" : startingCam ? "Activation..." : "Activer cam"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void toggleMic()}
+                    disabled={!camOn}
+                    className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-5 py-4 text-sm font-black uppercase tracking-[0.16em] text-white/85 transition hover:bg-red-900/16 disabled:opacity-40"
+                  >
+                    {micOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                    {micOn ? "Micro on" : "Micro off"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void loadRoom()}
+                    className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-5 py-4 text-sm font-black uppercase tracking-[0.16em] text-white/85 transition hover:bg-red-900/16"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Rafraîchir
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <FlashBanner flash={flash} />
+
+            <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+              <div className="space-y-6">
+                <section className="rounded-[30px] border border-red-500/14 bg-[#0b0b10] p-6 shadow-[0_20px_70px_rgba(0,0,0,0.40)]">
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                        Bloc principal
+                      </div>
+                      <div className="mt-1 text-2xl font-black text-white">Slots 1 à 6</div>
+                    </div>
+                    <Tag tone="red">{Math.min(members.length, 6)}/6</Tag>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {primarySlots.map((slotNumber) => {
+                      const member = membersBySlot.get(slotNumber);
+                      const isSelf = member?.user_id === profile?.id;
+
+                      return (
+                        <SlotCard
+                          key={slotNumber}
+                          slotNumber={slotNumber}
+                          member={member}
+                          isSelf={Boolean(isSelf)}
+                          camOn={camOn}
+                          localVideoRef={localVideoRef}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {shouldShowExtension ? (
+                  <section className="rounded-[30px] border border-fuchsia-400/14 bg-[#0b0b10] p-6 shadow-[0_20px_70px_rgba(0,0,0,0.40)]">
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.30em] text-fuchsia-200/34">
+                          Extension automatique
+                        </div>
+                        <div className="mt-1 text-2xl font-black text-white">Slots 7 à 12</div>
+                      </div>
+                      <Tag tone="gold">{Math.max(0, members.length - 6)}/6</Tag>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {secondarySlots.map((slotNumber) => {
+                        const member = membersBySlot.get(slotNumber);
+                        const isSelf = member?.user_id === profile?.id;
+
+                        return (
+                          <SlotCard
+                            key={slotNumber}
+                            slotNumber={slotNumber}
+                            member={member}
+                            isSelf={Boolean(isSelf)}
+                            camOn={camOn}
+                            localVideoRef={localVideoRef}
+                          />
+                        );
+                      })}
+                    </div>
+                  </section>
                 ) : null}
               </div>
 
-              <button
-                onClick={closeModal}
-                className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10"
-                title="Fermer"
-              >
-                <X className="h-4 w-4 text-white/80" />
-              </button>
-            </div>
-
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={closeModal}
-                disabled={confirmBusy}
-                className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/80 hover:bg-white/10 disabled:opacity-60"
-              >
-                Annuler
-              </button>
-
-              <button
-                onClick={confirmJoin}
-                disabled={confirmBusy || !pendingSlot}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-3 text-sm font-black text-black hover:opacity-95 disabled:opacity-60"
-              >
-                <Check className="h-4 w-4" />
-                {confirmBusy ? "..." : "Confirmer"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Top bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => router.push("/salons")}
-            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold hover:bg-white/10"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Salons
-          </button>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold">
-            Room: {roomId}
-          </div>
-
-          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200">
-            En ligne: {onlineCount}
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80">
-            {selectedSlot ? `Ta place: ${slotLabel(selectedSlot)}` : "Aucune place"}
-          </div>
-        </div>
-
-        <button
-          onClick={refreshAll}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold hover:bg-white/10 disabled:opacity-60"
-        >
-          <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
-          Actualiser
-        </button>
-      </div>
-
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      ) : null}
-
-      {info ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          {info}
-        </div>
-      ) : null}
-
-      {loading ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-square rounded-2xl border border-white/10 bg-white/5 animate-pulse" />
-          ))}
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm text-white/70">
-              Slots occupés = pseudo stylé ✅
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {!selectedSlot ? (
-                <button
-                  onClick={requestAuto}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-sm font-black text-black hover:opacity-95"
-                >
-                  <Wand2 className="h-4 w-4" />
-                  Auto
-                </button>
-              ) : (
-                <button
-                  onClick={leaveSlotOnly}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-sm font-bold text-red-200 hover:bg-red-500/15"
-                >
-                  <DoorOpen className="h-4 w-4" />
-                  Quitter la place
-                </button>
-              )}
-
-              <button
-                onClick={() => setShowExtras((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold hover:bg-white/10"
-              >
-                {showExtras ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                {showExtras ? "Cacher extras" : "Afficher extras"}
-              </button>
-            </div>
-          </div>
-
-          {/* Slots grid */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {slots.map((s) => {
-              const occupied = Boolean(s.member);
-              const isMine = s.member?.user_id === myUserId;
-
-              const memberProfile: DisplayProfile | null = s.member
-                ? (profilesById[s.member.user_id] || { pseudo: s.member.pseudo || "Membre" })
-                : null;
-
-              return (
-                <div
-                  key={s.id}
-                  className={cx(
-                    "aspect-square rounded-2xl border border-white/10 bg-black/50 overflow-hidden relative",
-                    selectedSlot === s.id && "ring-1 ring-rose-400/40"
-                  )}
-                >
-                  <div className="absolute left-3 top-3 rounded-full border border-white/10 bg-black/50 px-2.5 py-1 text-[11px] font-bold text-white/80">
-                    {slotLabel(s.id)}
+              <aside className="space-y-6">
+                <section className="rounded-[30px] border border-red-500/14 bg-[#0b0b10] p-6 shadow-[0_20px_70px_rgba(0,0,0,0.40)]">
+                  <div className="mb-5 flex items-center gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-[16px] border border-red-500/14 bg-black/25 text-white">
+                      <Users className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                        Membres présents
+                      </div>
+                      <div className="mt-1 text-xl font-black text-white">{members.length}</div>
+                    </div>
                   </div>
 
-                  {/* My camera */}
-                  {selectedSlot === s.id && videoRef.current?.srcObject ? (
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      className={cx("w-full h-full object-cover", !cam && "opacity-20 blur-sm")}
-                    />
-                  ) : occupied ? (
-                    <div className="flex h-full w-full flex-col justify-between p-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black text-emerald-200">
-                          EN LIGNE
-                        </span>
-                        {isMine ? (
-                          <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black text-white/70">
-                            TOI
-                          </span>
-                        ) : null}
+                  <div className="space-y-3">
+                    {members.length === 0 ? (
+                      <div className="rounded-[18px] border border-red-500/10 bg-black/20 px-4 py-4 text-sm text-white/45">
+                        Aucun membre actif.
                       </div>
-
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        {memberProfile ? (
-                          <ProfileName profile={memberProfile} size="sm" showTitle />
-                        ) : (
-                          <div className="text-sm font-black text-white">Membre</div>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={() => requestJoinSlot(s.id)}
-                        className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-black text-white/85 hover:bg-white/15"
-                      >
-                        {selectedSlot ? "Changer ici" : "Prendre"}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex h-full w-full flex-col items-center justify-center text-center p-4">
-                      <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.03]">
-                        <Camera className="h-6 w-6 text-white/35" />
-                      </div>
-                      <div className="text-sm font-black text-white/85">Libre</div>
-
-                      <button
-                        onClick={() => requestJoinSlot(s.id)}
-                        className="mt-4 rounded-xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2 text-xs font-black text-black transition hover:opacity-95"
-                      >
-                        {selectedSlot ? "Changer ici" : "Rejoindre"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Cam/mic */}
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={toggleCam}
-              disabled={!selectedSlot}
-              className={cx(
-                "inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition",
-                !selectedSlot
-                  ? "border border-white/10 bg-white/5 text-white/40"
-                  : cam
-                  ? "border border-white/10 bg-white/10 hover:bg-white/15"
-                  : "border border-red-400/20 bg-red-500/10 text-red-200"
-              )}
-            >
-              {cam ? <Camera className="h-4 w-4" /> : <CameraOff className="h-4 w-4" />}
-              {cam ? "Cam active" : "Cam coupée"}
-            </button>
-
-            <button
-              onClick={toggleMic}
-              disabled={!selectedSlot}
-              className={cx(
-                "inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-black transition",
-                !selectedSlot
-                  ? "border border-white/10 bg-white/5 text-white/40"
-                  : mic
-                  ? "border border-white/10 bg-white/10 hover:bg-white/15"
-                  : "border border-red-400/20 bg-red-500/10 text-red-200"
-              )}
-            >
-              {mic ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-              {mic ? "Micro actif" : "Micro coupé"}
-            </button>
-          </div>
-
-          {/* CHAT */}
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="mb-3 text-lg font-black">Chat</div>
-
-            <div
-              ref={chatBoxRef}
-              className="h-64 overflow-auto rounded-2xl border border-white/10 bg-black/30 p-3"
-            >
-              {messages.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-sm text-white/55">
-                  Aucun message.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {messages.map((m) => {
-                    const mine = m.user_id === myUserId;
-                    const p = profilesById[m.user_id] || { pseudo: m.pseudo || "Membre" };
-
-                    return (
-                      <div key={m.id} className={cx("flex", mine ? "justify-end" : "justify-start")}>
+                    ) : (
+                      members.map((member) => (
                         <div
-                          className={cx(
-                            "max-w-[88%] rounded-2xl px-3 py-2 text-sm",
-                            mine
-                              ? "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black"
-                              : "border border-white/10 bg-white/10 text-white"
-                          )}
+                          key={member.id}
+                          className="flex items-start justify-between gap-4 rounded-[18px] border border-red-500/10 bg-black/20 px-4 py-4"
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className={cx(mine ? "text-black/80" : "text-white/85")}>
-                              <ProfileName profile={p} size="sm" showTitle />
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-black uppercase tracking-[0.12em] text-white">
+                              Slot {member.slot_number} • {member.pseudo || "Membre"}
                             </div>
-                            <div className={cx("text-[11px] font-bold", mine ? "text-black/60" : "text-white/45")}>
-                              {formatMsgTime(m.created_at)}
+                            <div className="mt-1 text-sm text-white/52">
+                              {member.user_id === profile?.id ? "Toi" : "Présent dans la salle"}
                             </div>
                           </div>
 
-                          <div className="mt-2 whitespace-pre-wrap leading-6">
-                            {m.content}
+                          <div className="shrink-0">
+                            {member.cam_enabled ? <Tag tone="red">Cam</Tag> : <Tag>Présent</Tag>}
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                      ))
+                    )}
+                  </div>
+                </section>
 
-            <div className="mt-3 flex gap-2">
-              <input
-                value={chat}
-                onChange={(e) => setChat(e.target.value)}
-                placeholder="Écris..."
-                className="flex-1 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm outline-none focus:border-rose-400/40"
-              />
-              <button
-                onClick={sendMessage}
-                disabled={sending}
-                className="inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-3 font-black text-black disabled:opacity-70"
-                title="Envoyer"
-              >
-                {sending ? "..." : <Send className="h-4.5 w-4.5" />}
-              </button>
+                <section className="rounded-[30px] border border-red-500/14 bg-[#0b0b10] p-6 shadow-[0_20px_70px_rgba(0,0,0,0.40)]">
+                  <div className="mb-5 flex items-center gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-[16px] border border-red-500/14 bg-black/25 text-white">
+                      <Shield className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                        Monitoring
+                      </div>
+                      <div className="mt-1 text-xl font-black text-white">Salle</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 text-sm text-white/58">
+                    <div className="rounded-[18px] border border-red-500/10 bg-black/20 px-4 py-4">
+                      Capacité max : <span className="font-black text-white">{room?.max_members ?? 12}</span>
+                    </div>
+                    <div className="rounded-[18px] border border-red-500/10 bg-black/20 px-4 py-4">
+                      Slots visibles de base : <span className="font-black text-white">{room?.max_visible_slots ?? 6}</span>
+                    </div>
+                    <div className="rounded-[18px] border border-red-500/10 bg-black/20 px-4 py-4">
+                      Extension automatique : <span className="font-black text-white">{shouldShowExtension ? "Oui" : "Non"}</span>
+                    </div>
+                  </div>
+                </section>
+              </aside>
             </div>
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }

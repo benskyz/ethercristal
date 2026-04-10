@@ -1,30 +1,6 @@
-import { requireSupabaseBrowserClient } from "./supabase";
+import type { User } from "@supabase/supabase-js";
+import { ensureProfileRecord, type ProfileRow } from "@/lib/profileCompat";
 
-export async function ensureProfile(user: any) {
-  const supabase = requireSupabaseBrowserClient();
-
-  const { data } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (data) return data;
-
-  const username = (user.email || "membre").split("@")[0];
-
-  await supabase.from("profiles").insert({
-    id: user.id,
-    username,
-    vip_level: "Standard",
-    ether_balance: 100,
-  });
-
-  const { data: created } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
-
-  return created;
+export async function ensureProfile(user: User): Promise<ProfileRow> {
+  return ensureProfileRecord(user);
 }

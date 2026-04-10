@@ -1,1020 +1,649 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  Crown,
+  Lock,
+  Menu,
+  RefreshCw,
+  Shield,
+  Sparkles,
+  Star,
+  Zap,
+} from "lucide-react";
+import Sidebar from "@/components/Sidebar";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import {
+  ensureProfileRecord,
+  isVipActive,
+  profileDisplayName,
+  type ProfileRow,
+} from "@/lib/profileCompat";
+import {
+  EtherFXStyles,
+  FXBadge,
+  FXName,
+  FXTitle,
+  FXVipCard,
+  type VIPGrade,
+} from "@/components/effects/EtherFX";
 
-type ProfileRow = {
+type VipPlanRow = {
   id: string;
-  username?: string | null;
-  vip_level?: string | null;
-  ether_balance?: number | null;
-  is_verified?: boolean | null;
-  avatar_url?: string | null;
-  display_name_color?: string | null;
-  display_name_glow?: string | null;
-  display_name_gradient?: string | null;
-};
-
-type VipDuration = {
-  id: string;
-  label: string;
-  price: number;
-  displayPrice: string;
-  popular?: boolean;
-};
-
-type VipTier = {
-  id: string;
-  name: string;
-  subtitle: string;
-  accent: "gold" | "diamond";
-  badge: string;
+  slug: string;
+  title: string;
   description: string;
-  features: string[];
-  highlight: string;
-  durations: VipDuration[];
-  levelMatches: string[];
-  visuals: string[];
+  price: number;
+  duration_days: number;
+  perks: string;
+  is_active: boolean;
 };
 
-const VIP_TIERS: VipTier[] = [
-  {
-    id: "vip",
-    name: "VIP",
-    subtitle: "Accès premium élégant",
-    accent: "gold",
-    badge: "Gold Access",
-    description:
-      "Le palier premium essentiel pour débloquer les salons VIP, améliorer ta présence et donner à ton compte une vraie montée en gamme.",
-    highlight:
-      "Une aura dorée, plus sensuelle, plus luxueuse, plus visible sans tomber dans l’excès.",
-    features: [
-      "Accès aux salons VIP",
-      "Badge premium visible",
-      "Profil mieux valorisé",
-      "Expérience premium plus cohérente",
-      "Accès boutique réservé sur certaines offres",
-      "Présence plus forte dans l’univers EtherCristal",
-    ],
-    durations: [
-      { id: "1w", label: "1 semaine", price: 5, displayPrice: "5 $" },
-      { id: "1m", label: "1 mois", price: 17, displayPrice: "17 $", popular: true },
-      { id: "3m", label: "3 mois", price: 36.99, displayPrice: "36.99 $" },
-      { id: "6m", label: "6 mois", price: 60, displayPrice: "60 $" },
-      { id: "12m", label: "1 an", price: 90, displayPrice: "90 $" },
-    ],
-    levelMatches: ["vip", "vip nuit", "vip_nuit", "vip gold", "gold"],
-    visuals: [
-      "Palette or chaud et velours sombre",
-      "Présence premium visible",
-      "Ambiance élégante et sensuelle",
-    ],
-  },
-  {
-    id: "vip-plus",
-    name: "VIP+",
-    subtitle: "Bleu diamant, prestige supérieur",
-    accent: "diamond",
-    badge: "Diamond Blue",
-    description:
-      "Le niveau renforcé pour les membres qui veulent une identité plus rare, plus visible, plus luxueuse et une sensation de vrai privilège.",
-    highlight:
-      "Une présence plus nette, plus froide, plus précieuse, avec une vraie impression de rareté premium.",
-    features: [
-      "Tous les avantages VIP",
-      "Identité VIP+ bleu diamant",
-      "Présence encore plus haut de gamme",
-      "Meilleure mise en avant du profil",
-      "Accès premium renforcé selon les espaces",
-      "Sens d’exclusivité supérieur",
-    ],
-    durations: [
-      { id: "1w", label: "1 semaine", price: 10, displayPrice: "10 $" },
-      { id: "1m", label: "1 mois", price: 25, displayPrice: "25 $", popular: true },
-      { id: "3m", label: "3 mois", price: 45, displayPrice: "45 $" },
-      { id: "6m", label: "6 mois", price: 70, displayPrice: "70 $" },
-      { id: "12m", label: "1 an", price: 110, displayPrice: "110 $" },
-    ],
-    levelMatches: [
-      "vip+",
-      "vip plus",
-      "vip-plus",
-      "vip_plus",
-      "diamond",
-      "blue diamond",
-      "vip diamant",
-    ],
-    visuals: [
-      "Palette bleu diamant et reflets glacés",
-      "Prestige plus rare et plus net",
-      "Signature premium plus exclusive",
-    ],
-  },
-];
+type FlashState =
+  | {
+      tone: "success" | "error";
+      text: string;
+    }
+  | null;
 
-function getProfileName(profile: ProfileRow | null) {
-  return String(profile?.username || "Membre");
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function getProfileNameStyle(profile: ProfileRow | null) {
-  if (!profile) return {};
+function safeText(value: unknown, fallback = "") {
+  const s = String(value ?? "").trim();
+  return s || fallback;
+}
 
-  if (profile.display_name_gradient) {
-    return {
-      background: profile.display_name_gradient,
-      WebkitBackgroundClip: "text",
-      backgroundClip: "text",
-      color: "transparent",
-      textShadow: profile.display_name_glow
-        ? `0 0 16px ${profile.display_name_glow}`
-        : "0 0 14px rgba(212,175,55,0.14)",
-    };
+function toNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toMoney(value: number, currency = "CAD") {
+  try {
+    return new Intl.NumberFormat("fr-CA", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency}`;
   }
+}
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+function normalizePlan(row: Record<string, unknown>): VipPlanRow {
   return {
-    color: profile.display_name_color || "#fff6d6",
-    textShadow: profile.display_name_glow
-      ? `0 0 16px ${profile.display_name_glow}`
-      : "0 0 14px rgba(212,175,55,0.14)",
+    id: safeText(row.id),
+    slug: safeText(row.slug),
+    title: safeText(row.title, "VIP"),
+    description: safeText(row.description, "Plan VIP"),
+    price: toNumber(row.price, 0),
+    duration_days: toNumber(row.duration_days, 30),
+    perks: safeText(row.perks, ""),
+    is_active: Boolean(row.is_active),
   };
 }
 
-function normalizeLevel(value?: string | null) {
-  return String(value || "").trim().toLowerCase();
+function planGradeFromSlug(plan: VipPlanRow): VIPGrade {
+  const raw = `${plan.slug} ${plan.title}`.toLowerCase();
+
+  if (raw.includes("ruby")) return "ruby_vip";
+  if (raw.includes("crystal")) return "crystal_vip";
+  if (raw.includes("obsidian")) return "obsidian_vip";
+  if (raw.includes("black") && raw.includes("diamond")) return "black_diamond";
+  if (raw.includes("elite")) return "ether_elite";
+  if (raw.includes("god")) return "god_mode";
+  return "vip";
 }
 
-export default function VipDetailPage() {
+function FlashBanner({ flash }: { flash: FlashState }) {
+  if (!flash) return null;
+
+  return (
+    <div
+      className={cx(
+        "rounded-[20px] border px-4 py-4 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.22)]",
+        flash.tone === "success"
+          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+          : "border-red-400/20 bg-red-500/10 text-red-100"
+      )}
+    >
+      {flash.text}
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  children,
+  right,
+}: {
+  title: string;
+  children: ReactNode;
+  right?: ReactNode;
+}) {
+  return (
+    <section className="relative overflow-hidden rounded-[30px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.34)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.05),transparent_35%),linear-gradient(135deg,rgba(190,20,20,0.08),rgba(255,0,90,0.05),rgba(255,255,255,0.01))]" />
+      <div className="relative z-10">
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div className="bg-gradient-to-r from-red-300/80 via-white/90 to-fuchsia-300/80 bg-clip-text text-[11px] font-black uppercase tracking-[0.35em] text-transparent">
+            {title}
+          </div>
+          {right}
+        </div>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+export default function VipPlanPage() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
+  const params = useParams();
 
+  const planKey = Array.isArray(params?.id) ? params.id[0] : String(params?.id || "");
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [startingCheckout, setStartingCheckout] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [buying, setBuying] = useState(false);
+
   const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [notice, setNotice] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [plan, setPlan] = useState<VipPlanRow | null>(null);
+  const [flash, setFlash] = useState<FlashState>(null);
 
-  const tierId = String(params?.id || "").toLowerCase();
-  const durationParam = String(searchParams.get("duration") || "");
+  const vipActive = useMemo(() => isVipActive(profile), [profile]);
+  const isAdmin = Boolean(profile?.is_admin);
 
-  const tier = useMemo(() => {
-    return VIP_TIERS.find((item) => item.id === tierId) || null;
-  }, [tierId]);
+  const loadPage = useCallback(
+    async (firstLoad = false) => {
+      try {
+        if (firstLoad) setLoading(true);
+        else setRefreshing(true);
 
-  const selectedDuration = useMemo(() => {
-    if (!tier) return null;
-    return (
-      tier.durations.find((duration) => duration.id === durationParam) ||
-      tier.durations.find((duration) => duration.popular) ||
-      tier.durations[0]
-    );
-  }, [tier, durationParam]);
+        setFlash(null);
 
-  useEffect(() => {
-    void loadPage();
-  }, []);
+        const supabase = requireSupabaseBrowserClient();
 
-  async function ensureProfile(userId: string, fallbackUsername: string) {
-    const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-    const { data: profileData, error: profileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .maybeSingle();
+        if (authError || !user) {
+          router.replace("/enter");
+          return;
+        }
 
-    if (profileError) {
-      throw new Error(profileError.message || "Impossible de charger le profil.");
-    }
+        const nextProfile = await ensureProfileRecord(user);
 
-    if (profileData) return profileData as ProfileRow;
+        let planRes;
+        if (isUuid(planKey)) {
+          planRes = await supabase
+            .from("subscription_plans")
+            .select("*")
+            .eq("id", planKey)
+            .eq("is_active", true)
+            .maybeSingle();
+        } else {
+          planRes = await supabase
+            .from("subscription_plans")
+            .select("*")
+            .eq("slug", planKey)
+            .eq("is_active", true)
+            .maybeSingle();
+        }
 
-    const payload = {
-      id: userId,
-      username: fallbackUsername || "Membre",
-      vip_level: "Standard",
-      ether_balance: 0,
-      is_verified: false,
-      is_admin: false,
-      theme_mode: "gold",
-      match_preference: "soft",
-      show_online: true,
-      allow_messages: true,
-    };
+        if (planRes.error) throw planRes.error;
 
-    const { error: upsertError } = await supabase
-      .from("profiles")
-      .upsert(payload, { onConflict: "id" });
+        if (!planRes.data) {
+          setProfile(nextProfile);
+          setPlan(null);
+          return;
+        }
 
-    if (upsertError) {
-      throw new Error(upsertError.message || "Impossible de créer le profil.");
-    }
-
-    const { data: createdProfile, error: createdError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (createdError) {
-      throw new Error(createdError.message || "Impossible de relire le profil.");
-    }
-
-    if (!createdProfile) {
-      throw new Error("Profil introuvable après création.");
-    }
-
-    return createdProfile as ProfileRow;
-  }
-
-  async function loadPage() {
-    setLoading(true);
-    setNotice("");
-    setErrorMsg("");
-
-    try {
-      const supabase = requireSupabaseBrowserClient();
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-
-      if (authError || !authData.user) {
-        router.push("/login");
-        return;
-      }
-
-      if (!tier) {
-        setErrorMsg("Offre VIP introuvable.");
+        setProfile(nextProfile);
+        setPlan(normalizePlan(planRes.data as Record<string, unknown>));
+      } catch (e: any) {
+        setFlash({
+          tone: "error",
+          text: e?.message || "Impossible de charger ce plan VIP.",
+        });
+      } finally {
         setLoading(false);
-        return;
+        setRefreshing(false);
       }
-
-      const authUser = authData.user;
-      const fallbackUsername = String(
-        authUser.user_metadata?.username || authUser.email || "Membre"
-      )
-        .split("@")[0]
-        .slice(0, 24);
-
-      const ensuredProfile = await ensureProfile(authUser.id, fallbackUsername);
-      setProfile(ensuredProfile);
-    } catch (e: any) {
-      setErrorMsg(e?.message || "Erreur chargement offre VIP.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const currentLevel = useMemo(
-    () => normalizeLevel(profile?.vip_level || "standard"),
-    [profile?.vip_level]
+    },
+    [planKey, router]
   );
 
-  const isCurrentTier = useMemo(() => {
-    if (!tier) return false;
-    return tier.levelMatches.includes(currentLevel);
-  }, [tier, currentLevel]);
+  useEffect(() => {
+    if (!planKey) {
+      router.replace("/vip");
+      return;
+    }
+    void loadPage(true);
+  }, [planKey, router, loadPage]);
 
-  async function handleCheckout() {
-    if (!tier || !selectedDuration) return;
+  async function handleActivate() {
+    if (!profile || !plan) return;
+
+    if (isAdmin) {
+      setFlash({
+        tone: "success",
+        text: "Ton compte admin a déjà accès aux privilèges premium.",
+      });
+      return;
+    }
+
+    if (profile.credits < plan.price) {
+      setFlash({
+        tone: "error",
+        text: "Tu n’as pas assez de crédits pour ce plan.",
+      });
+      return;
+    }
 
     try {
-      setStartingCheckout(true);
-      setNotice("");
-      setErrorMsg("");
+      setBuying(true);
+      setFlash(null);
 
-      const productSlug = `${tier.id}-${selectedDuration.id}`;
+      const supabase = requireSupabaseBrowserClient();
 
-      const res = await fetch("/api/stripe/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          priceName: `${tier.name} — ${selectedDuration.label}`,
-          amountUsd: selectedDuration.price,
-          mode: "payment",
-          metadata: {
-            product_slug: productSlug,
-            vip_tier: tier.id,
-            vip_duration: selectedDuration.id,
-            vip_duration_label: selectedDuration.label,
-            auto_equip: "false",
-          },
-        }),
+      const now = Date.now();
+      const base =
+        profile.vip_expires_at && new Date(profile.vip_expires_at).getTime() > now
+          ? new Date(profile.vip_expires_at).getTime()
+          : now;
+
+      const expiresAt = new Date(
+        base + plan.duration_days * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const nextCredits = profile.credits - plan.price;
+
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          credits: nextCredits,
+          is_vip: true,
+          vip_expires_at: expiresAt,
+        })
+        .eq("id", profile.id);
+
+      if (profileError) throw profileError;
+
+      const subInsert = await supabase.from("vip_subscriptions").insert({
+        user_id: profile.id,
+        plan_id: plan.id,
+        started_at: new Date().toISOString(),
+        expires_at: expiresAt,
+        status: "active",
       });
 
-      const json = await res.json();
-
-      if (!res.ok || !json?.url) {
-        setErrorMsg(json?.error || "Impossible de lancer le paiement Stripe.");
-        return;
+      if (subInsert.error) {
+        console.warn("vip_subscriptions warning:", subInsert.error.message);
       }
 
-      window.location.href = json.url;
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              credits: nextCredits,
+              is_vip: true,
+              vip_expires_at: expiresAt,
+            }
+          : prev
+      );
+
+      setFlash({
+        tone: "success",
+        text: `${plan.title} activé. Ton VIP est maintenant prolongé jusqu’au ${new Date(
+          expiresAt
+        ).toLocaleString()}.`,
+      });
     } catch (e: any) {
-      setErrorMsg(e?.message || "Erreur lancement paiement.");
+      setFlash({
+        tone: "error",
+        text: e?.message || "Activation VIP impossible.",
+      });
     } finally {
-      setStartingCheckout(false);
+      setBuying(false);
     }
   }
 
   if (loading) {
     return (
-      <main className="vipd-page">
-        <style>{css}</style>
-        <div className="vipd-loading">
-          <div className="vipd-loader" />
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
+        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
+          </div>
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            EtherCristal
+          </div>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Chargement plan VIP...
+          </h1>
         </div>
-      </main>
+      </div>
     );
   }
 
-  if (!tier || !selectedDuration) {
+  if (!plan) {
     return (
-      <main className="vipd-page">
-        <style>{css}</style>
-        <div className="vipd-shell">
-          <div className="vipd-error">Offre introuvable.</div>
+      <>
+        <EtherFXStyles />
+        <div className="min-h-screen bg-[#050507] text-white">
+          <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+          <div className="relative min-h-screen lg:pl-[290px]">
+            <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+              <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(true)}
+                  className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+                >
+                  <Menu className="h-4 w-4" />
+                  Menu
+                </button>
+              </div>
+
+              <Panel title="Plan introuvable">
+                <div className="rounded-[24px] border border-red-500/12 bg-black/20 p-8 text-center">
+                  <div className="text-2xl font-black text-white">
+                    Ce plan n’existe pas ou n’est plus actif.
+                  </div>
+                  <div className="mt-3 text-sm text-white/54">
+                    Retourne à la page VIP pour choisir une autre formule.
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/vip")}
+                    className="mt-6 inline-flex items-center gap-2 rounded-[18px] border border-amber-400/18 bg-amber-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-amber-100 transition hover:bg-amber-500/16"
+                  >
+                    <Crown className="h-4 w-4" />
+                    Retour VIP
+                  </button>
+                </div>
+              </Panel>
+            </div>
+          </div>
         </div>
-      </main>
+      </>
     );
   }
 
   return (
-    <main className="vipd-page">
-      <style>{css}</style>
+    <>
+      <EtherFXStyles />
 
-      <div className="vipd-bg vipd-bg-a" />
-      <div className="vipd-bg vipd-bg-b" />
-      <div className="vipd-noise" />
-      <div className={`vipd-orb vipd-orb-a ${tier.accent}`} />
-      <div className={`vipd-orb vipd-orb-b ${tier.accent}`} />
+      <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="vipd-shell">
-        <header className="vipd-topbar">
-          <div>
-            <div className="vipd-kicker">Détail de l’offre</div>
-            <h1 className="vipd-title">
-              {tier.accent === "gold" ? (
-                <span className="goldText">{tier.name}</span>
-              ) : (
-                <span className="diamondText">{tier.name}</span>
-              )}
-            </h1>
-            <p className="vipd-subtitle">{tier.subtitle}</p>
+        <div className="relative min-h-screen lg:pl-[290px]">
+          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+            <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+            <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
           </div>
 
-          <div className="vipd-topActions">
-            <button className="vipd-navBtn" type="button" onClick={() => router.push("/vip")}>
-              Retour VIP
-            </button>
-            <button className="vipd-navBtn" type="button" onClick={() => router.push("/profile")}>
-              Profil
-            </button>
-            <button className="vipd-navBtn gold" type="button" onClick={() => router.push("/dashboard")}>
-              Dashboard
-            </button>
-          </div>
-        </header>
+          <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+            <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+              >
+                <Menu className="h-4 w-4" />
+                Menu
+              </button>
 
-        <section className={`vipd-hero ${tier.accent}`}>
-          <div className="vipd-memberBlock">
-            <div className="vipd-memberLabel">Compte</div>
-            <div className="vipd-memberName" style={getProfileNameStyle(profile)}>
-              {getProfileName(profile)}
+              <button
+                type="button"
+                onClick={() => void loadPage(false)}
+                className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+              >
+                <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+                Refresh
+              </button>
             </div>
 
-            <div className="vipd-badgeRow">
-              <span className="vipd-badge ether">
-                {Number(profile?.ether_balance || 0)} Ξ
-              </span>
-              <span className="vipd-badge current">
-                {profile?.vip_level || "Standard"}
-              </span>
-              {profile?.is_verified ? (
-                <span className="vipd-badge verified">Vérifié</span>
-              ) : null}
-            </div>
+            <div className="space-y-6">
+              <section className="relative overflow-hidden rounded-[34px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)] sm:p-8">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
 
-            <p className="vipd-memberText">
-              {isCurrentTier
-                ? `Tu es déjà sur le niveau ${tier.name}. Tu peux renouveler ou prolonger avec une nouvelle durée.`
-                : `Tu es actuellement sur ${profile?.vip_level || "Standard"}. Cette offre te fera passer sur ${tier.name}.`}
-            </p>
-          </div>
+                <div className="relative z-10">
+                  <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                    formule VIP
+                  </div>
 
-          <div className="vipd-summaryCard">
-            <span>Durée sélectionnée</span>
-            <strong>{selectedDuration.label}</strong>
-            <p>{selectedDuration.displayPrice}</p>
-          </div>
-        </section>
+                  <h1 className="mt-3 text-4xl font-black tracking-[-0.04em] text-white md:text-6xl">
+                    {plan.title}
+                  </h1>
 
-        {notice ? <div className="vipd-notice">{notice}</div> : null}
-        {errorMsg ? <div className="vipd-error">{errorMsg}</div> : null}
+                  <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                    <span className="font-black text-white">
+                      {profileDisplayName(profile)}
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      crédits <span className="font-black text-white">{profile?.credits ?? 0}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      durée <span className="font-black text-white">{plan.duration_days} jours</span>
+                    </span>
+                  </div>
 
-        <section className="vipd-grid">
-          <article className={`vipd-card main ${tier.accent}`}>
-            <div className="vipd-cardKicker">Signature</div>
-            <h2 className="vipd-cardTitle">{tier.highlight}</h2>
-            <p className="vipd-cardText">{tier.description}</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {vipActive ? (
+                      <FXBadge
+                        label="VIP actif"
+                        variant="obsidian"
+                        icon={<Crown className="h-3.5 w-3.5" />}
+                      />
+                    ) : (
+                      <FXBadge
+                        label="standard"
+                        variant="ether"
+                        icon={<Lock className="h-3.5 w-3.5" />}
+                      />
+                    )}
 
-            <div className="vipd-visualGrid">
-              {tier.visuals.map((item) => (
-                <div key={item} className="vipd-visualItem">
-                  {item}
+                    {isAdmin ? (
+                      <FXBadge
+                        label="admin"
+                        variant="ember"
+                        icon={<Shield className="h-3.5 w-3.5" />}
+                      />
+                    ) : null}
+
+                    {profile?.active_name_fx_key ? (
+                      <FXBadge
+                        label={profile.active_name_fx_key}
+                        variant={profile.active_name_fx_key}
+                        icon={<Zap className="h-3.5 w-3.5" />}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-              ))}
-            </div>
+              </section>
 
-            <div className="vipd-listBlock">
-              <div className="vipd-listTitle">Ce que tu débloques</div>
-              <ul className="vipd-list">
-                {tier.features.map((feature) => (
-                  <li key={feature}>{feature}</li>
-                ))}
-              </ul>
-            </div>
-          </article>
+              <FlashBanner flash={flash} />
 
-          <article className="vipd-card side">
-            <div className="vipd-cardKicker">Durées</div>
-            <h2 className="vipd-cardTitle">Choisis ta formule</h2>
+              <div className="grid gap-6 xl:grid-cols-[1fr_0.92fr]">
+                <Panel title="Plan sélectionné">
+                  <FXVipCard
+                    grade={planGradeFromSlug(plan)}
+                    title={plan.title}
+                    description={plan.description}
+                    price={toMoney(plan.price)}
+                    perks={
+                      plan.perks ||
+                      "Accès premium, mise en valeur visuelle, priorité sur l’expérience."
+                    }
+                    days={`${plan.duration_days} jours`}
+                    busy={buying}
+                    onClick={() => void handleActivate()}
+                  />
 
-            <div className="vipd-durationGrid">
-              {tier.durations.map((duration) => {
-                const active = duration.id === selectedDuration.id;
-
-                return (
-                  <button
-                    key={duration.id}
-                    className={`vipd-durationChoice ${active ? "active" : ""}`}
-                    type="button"
-                    onClick={() => router.push(`/vip/${tier.id}?duration=${duration.id}`)}
-                  >
-                    <div className="vipd-durationTop">
-                      <span>{duration.label}</span>
-                      {duration.popular ? (
-                        <span className="vipd-miniBadge">Populaire</span>
-                      ) : null}
+                  <div className="mt-5 rounded-[22px] border border-red-500/12 bg-black/20 p-5">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                      Détails
                     </div>
-                    <strong>{duration.displayPrice}</strong>
-                  </button>
-                );
-              })}
+
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      <div className="rounded-[18px] border border-white/8 bg-[#111118] p-4">
+                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/34">
+                          Prix
+                        </div>
+                        <div className="mt-2 text-2xl font-black text-white">
+                          {toMoney(plan.price)}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[18px] border border-white/8 bg-[#111118] p-4">
+                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/34">
+                          Durée
+                        </div>
+                        <div className="mt-2 text-2xl font-black text-white">
+                          {plan.duration_days} jours
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-[18px] border border-white/8 bg-[#111118] p-4 text-sm leading-6 text-white/58">
+                      {plan.description}
+                    </div>
+                  </div>
+                </Panel>
+
+                <div className="space-y-6 xl:sticky xl:top-8 xl:self-start">
+                  <Panel
+                    title="Ton profil premium"
+                    right={<FXBadge label={`${profile?.credits ?? 0} crédits`} variant="ruby" />}
+                  >
+                    <div className="rounded-[24px] border border-red-500/12 bg-black/20 p-5">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                        Identité
+                      </div>
+
+                      <div className="mt-3">
+                        <FXName
+                          text={profileDisplayName(profile)}
+                          variant={profile?.active_name_fx_key || "ether"}
+                          size="xl"
+                        />
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {profile?.active_badge_key ? (
+                          <FXBadge
+                            label={profile.active_badge_key}
+                            variant={profile.active_badge_key}
+                            icon={<Sparkles className="h-3.5 w-3.5" />}
+                          />
+                        ) : null}
+
+                        {profile?.master_title ? (
+                          <FXTitle
+                            label={profile.master_title}
+                            variant={profile?.active_title_key || "void"}
+                          />
+                        ) : null}
+
+                        {vipActive ? (
+                          <FXBadge
+                            label="VIP"
+                            variant="obsidian"
+                            icon={<Crown className="h-3.5 w-3.5" />}
+                          />
+                        ) : null}
+
+                        {isAdmin ? (
+                          <FXBadge
+                            label="Admin"
+                            variant="ember"
+                            icon={<Shield className="h-3.5 w-3.5" />}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-4">
+                      <div className="rounded-[22px] border border-red-500/12 bg-black/20 p-5">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                          VIP actuel
+                        </div>
+                        <div className="mt-2 text-xl font-black text-white">
+                          {vipActive ? "Actif" : "Inactif"}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[22px] border border-red-500/12 bg-black/20 p-5">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                          Expiration actuelle
+                        </div>
+                        <div className="mt-2 text-sm text-white/64">
+                          {profile?.vip_expires_at
+                            ? new Date(profile.vip_expires_at).toLocaleString()
+                            : "Aucune expiration active"}
+                        </div>
+                      </div>
+                    </div>
+                  </Panel>
+
+                  <Panel title="Actions">
+                    <div className="grid gap-3">
+                      <button
+                        type="button"
+                        disabled={buying}
+                        onClick={() => void handleActivate()}
+                        className="inline-flex items-center justify-center gap-2 rounded-[18px] border border-amber-400/18 bg-amber-500/10 px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-amber-100 transition hover:bg-amber-500/16 disabled:opacity-50"
+                      >
+                        {buying ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Crown className="h-4 w-4" />
+                        )}
+                        Activer ce plan
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => router.push("/vip")}
+                        className="inline-flex items-center justify-center gap-2 rounded-[18px] border border-fuchsia-400/18 bg-fuchsia-500/10 px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/16"
+                      >
+                        <Star className="h-4 w-4" />
+                        Retour à la page VIP
+                      </button>
+                    </div>
+                  </Panel>
+                </div>
+              </div>
             </div>
-
-            <div className="vipd-checkoutBox">
-              <div className="vipd-checkoutRow">
-                <span>Offre</span>
-                <strong>{tier.name}</strong>
-              </div>
-              <div className="vipd-checkoutRow">
-                <span>Durée</span>
-                <strong>{selectedDuration.label}</strong>
-              </div>
-              <div className="vipd-checkoutRow total">
-                <span>Total</span>
-                <strong>{selectedDuration.displayPrice}</strong>
-              </div>
-            </div>
-
-            <button
-              className={`vipd-mainBtn ${tier.accent}`}
-              type="button"
-              onClick={() => void handleCheckout()}
-              disabled={startingCheckout}
-            >
-              {startingCheckout ? "Ouverture..." : isCurrentTier ? "Renouveler" : "Continuer vers paiement"}
-            </button>
-          </article>
-
-          <article className="vipd-card wide">
-            <div className="vipd-cardKicker">Questions rapides</div>
-            <h2 className="vipd-cardTitle">Ce qu’il faut savoir</h2>
-
-            <div className="vipd-faqGrid">
-              <div className="vipd-faqItem">
-                <strong>Quand l’accès est débloqué ?</strong>
-                <p>Dès que le paiement est validé et traité côté site.</p>
-              </div>
-              <div className="vipd-faqItem">
-                <strong>VIP+ inclut-il VIP ?</strong>
-                <p>Oui, VIP+ est au-dessus de VIP et reprend ses avantages essentiels.</p>
-              </div>
-              <div className="vipd-faqItem">
-                <strong>Peut-on renouveler ?</strong>
-                <p>Oui, tu peux reprendre une durée même si tu es déjà sur ce niveau.</p>
-              </div>
-              <div className="vipd-faqItem">
-                <strong>Où voir l’effet ensuite ?</strong>
-                <p>Sur le profil, dans les salons concernés et dans ton expérience premium globale.</p>
-              </div>
-            </div>
-          </article>
-        </section>
+          </div>
+        </div>
       </div>
-    </main>
+    </>
   );
 }
-
-const css = `
-.vipd-page{
-  min-height:100vh;
-  position:relative;
-  overflow:hidden;
-  background:
-    radial-gradient(circle at 18% 16%, rgba(212,175,55,0.10), transparent 26%),
-    radial-gradient(circle at 82% 18%, rgba(72,146,255,0.14), transparent 30%),
-    linear-gradient(180deg,#0d0205 0%, #090206 38%, #050205 100%);
-  color:#fff;
-}
-
-.vipd-bg{
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-}
-.vipd-bg-a{
-  background:
-    radial-gradient(circle at 28% 30%, rgba(255,255,255,0.02), transparent 18%),
-    radial-gradient(circle at 74% 66%, rgba(212,175,55,0.04), transparent 24%);
-  filter:blur(10px);
-}
-.vipd-bg-b{
-  background:
-    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px),
-    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px);
-  background-size:42px 42px;
-  opacity:.15;
-}
-
-.vipd-noise{
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  opacity:.03;
-  background-image:
-    radial-gradient(circle at 30% 30%, rgba(255,255,255,0.16) 0, transparent 22%),
-    radial-gradient(circle at 70% 60%, rgba(255,255,255,0.10) 0, transparent 18%);
-}
-
-.vipd-orb{
-  position:absolute;
-  border-radius:999px;
-  filter:blur(60px);
-  opacity:.16;
-  pointer-events:none;
-}
-.vipd-orb-a{
-  width:240px;
-  height:240px;
-  left:60px;
-  top:120px;
-}
-.vipd-orb-b{
-  width:270px;
-  height:270px;
-  right:70px;
-  top:150px;
-}
-.vipd-orb.gold{
-  background:rgba(212,175,55,0.42);
-}
-.vipd-orb.diamond{
-  background:rgba(92,162,255,0.28);
-}
-
-.vipd-shell{
-  position:relative;
-  z-index:2;
-  max-width:1460px;
-  margin:0 auto;
-  padding:28px 20px 42px;
-}
-
-.vipd-topbar{
-  display:flex;
-  justify-content:space-between;
-  gap:18px;
-  flex-wrap:wrap;
-  align-items:flex-start;
-}
-
-.vipd-kicker{
-  display:inline-flex;
-  min-height:36px;
-  padding:8px 14px;
-  border-radius:999px;
-  background:rgba(212,175,55,0.10);
-  color:#f6dc86;
-  border:1px solid rgba(212,175,55,0.18);
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-}
-
-.vipd-title{
-  margin:16px 0 0;
-  font-size:56px;
-  line-height:.95;
-  letter-spacing:-2px;
-  font-weight:900;
-}
-
-.goldText{
-  background:linear-gradient(90deg,#fff0be 0%, #d4af37 42%, #fff5c4 100%);
-  -webkit-background-clip:text;
-  background-clip:text;
-  color:transparent;
-}
-
-.diamondText{
-  background:linear-gradient(90deg,#dff6ff 0%, #6fdcff 35%, #5b8cff 72%, #dff6ff 100%);
-  -webkit-background-clip:text;
-  background-clip:text;
-  color:transparent;
-}
-
-.vipd-subtitle{
-  margin:14px 0 0;
-  max-width:760px;
-  color:rgba(255,245,220,0.74);
-  line-height:1.8;
-  font-size:17px;
-}
-
-.vipd-topActions{
-  display:flex;
-  gap:12px;
-  flex-wrap:wrap;
-}
-
-.vipd-navBtn{
-  min-height:46px;
-  padding:12px 18px;
-  border:none;
-  border-radius:16px;
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.08);
-  color:#fff;
-  font-weight:800;
-  cursor:pointer;
-}
-.vipd-navBtn.gold{
-  background:linear-gradient(90deg,#d4af37,#f0d48a);
-  color:#1a0014;
-  border-color:transparent;
-}
-
-.vipd-hero{
-  margin-top:24px;
-  display:flex;
-  justify-content:space-between;
-  gap:18px;
-  align-items:center;
-  flex-wrap:wrap;
-  padding:24px;
-  border-radius:30px;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
-    rgba(255,255,255,0.03);
-  border:1px solid rgba(212,175,55,0.16);
-  backdrop-filter:blur(14px);
-  box-shadow:0 20px 60px rgba(0,0,0,0.26);
-}
-.vipd-hero.diamond{
-  border-color:rgba(92,162,255,0.24);
-}
-
-.vipd-memberLabel{
-  font-size:12px;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  color:rgba(255,255,255,0.56);
-}
-.vipd-memberName{
-  margin-top:8px;
-  font-size:38px;
-  font-weight:900;
-  line-height:1;
-}
-.vipd-badgeRow{
-  margin-top:14px;
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-.vipd-badge{
-  display:inline-flex;
-  min-height:34px;
-  padding:8px 12px;
-  border-radius:999px;
-  background:rgba(255,255,255,0.08);
-  border:1px solid rgba(255,255,255,0.10);
-  color:#fff2d3;
-  font-size:12px;
-  font-weight:900;
-}
-.vipd-badge.ether{
-  background:rgba(212,175,55,0.14);
-  border-color:rgba(212,175,55,0.22);
-  color:#fff1c4;
-}
-.vipd-badge.current{
-  background:rgba(255,255,255,0.08);
-}
-.vipd-badge.verified{
-  background:rgba(47,143,88,0.16);
-  border-color:rgba(47,143,88,0.24);
-  color:#b9ffd4;
-}
-.vipd-memberText{
-  margin-top:14px;
-  color:rgba(255,245,220,0.74);
-  line-height:1.8;
-  max-width:740px;
-}
-
-.vipd-summaryCard{
-  min-width:240px;
-  padding:18px;
-  border-radius:22px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-}
-.vipd-summaryCard span{
-  display:block;
-  font-size:11px;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  color:rgba(255,255,255,0.54);
-}
-.vipd-summaryCard strong{
-  display:block;
-  margin-top:10px;
-  font-size:28px;
-  color:#fff2cb;
-}
-.vipd-summaryCard p{
-  margin:10px 0 0;
-  color:rgba(255,245,220,0.68);
-  line-height:1.7;
-}
-
-.vipd-notice,
-.vipd-error{
-  margin-top:18px;
-  padding:14px 16px;
-  border-radius:18px;
-}
-.vipd-notice{
-  background:rgba(212,175,55,0.10);
-  border:1px solid rgba(212,175,55,0.18);
-  color:#fff1c4;
-}
-.vipd-error{
-  background:rgba(255,47,67,0.10);
-  border:1px solid rgba(255,47,67,0.18);
-  color:#ffb1ba;
-}
-
-.vipd-grid{
-  margin-top:28px;
-  display:grid;
-  grid-template-columns:1.2fr 0.8fr;
-  gap:20px;
-}
-
-.vipd-card{
-  border-radius:30px;
-  padding:24px;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
-    rgba(255,255,255,0.03);
-  border:1px solid rgba(212,175,55,0.16);
-  backdrop-filter:blur(14px);
-  box-shadow:0 18px 60px rgba(0,0,0,0.24);
-}
-.vipd-card.wide{
-  grid-column:1 / -1;
-}
-.vipd-card.diamond{
-  border-color:rgba(92,162,255,0.24);
-}
-
-.vipd-cardKicker{
-  display:inline-flex;
-  min-height:30px;
-  padding:6px 12px;
-  border-radius:999px;
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.10);
-  color:#fff1c4;
-  font-size:12px;
-  font-weight:800;
-}
-.vipd-cardTitle{
-  margin:16px 0 0;
-  font-size:34px;
-  line-height:1;
-  font-weight:900;
-}
-.vipd-cardText{
-  margin:16px 0 0;
-  color:rgba(255,245,220,0.76);
-  line-height:1.8;
-}
-
-.vipd-visualGrid{
-  margin-top:18px;
-  display:grid;
-  gap:10px;
-}
-.vipd-visualItem{
-  padding:14px 16px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-  color:#fff2cb;
-  font-weight:800;
-}
-
-.vipd-listBlock{
-  margin-top:20px;
-}
-.vipd-listTitle{
-  font-size:13px;
-  font-weight:900;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  color:#fff2cb;
-}
-.vipd-list{
-  margin:12px 0 0;
-  padding-left:18px;
-  display:grid;
-  gap:10px;
-  color:rgba(255,245,220,0.76);
-  line-height:1.7;
-}
-
-.vipd-durationGrid{
-  margin-top:18px;
-  display:grid;
-  gap:10px;
-}
-.vipd-durationChoice{
-  width:100%;
-  text-align:left;
-  border:none;
-  cursor:pointer;
-  padding:14px 16px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-  color:#fff;
-}
-.vipd-durationChoice.active{
-  border-color:rgba(212,175,55,0.26);
-  box-shadow:0 0 0 1px rgba(212,175,55,0.10) inset;
-}
-.vipd-durationTop{
-  display:flex;
-  justify-content:space-between;
-  gap:10px;
-  align-items:center;
-}
-.vipd-durationChoice strong{
-  display:block;
-  margin-top:10px;
-  color:#fff2cb;
-  font-size:24px;
-}
-
-.vipd-miniBadge{
-  display:inline-flex;
-  min-height:28px;
-  padding:5px 10px;
-  border-radius:999px;
-  background:rgba(47,143,88,0.16);
-  border:1px solid rgba(47,143,88,0.24);
-  color:#b9ffd4;
-  font-size:11px;
-  font-weight:900;
-}
-
-.vipd-checkoutBox{
-  margin-top:20px;
-  padding:16px;
-  border-radius:20px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-}
-.vipd-checkoutRow{
-  display:flex;
-  justify-content:space-between;
-  gap:10px;
-  padding:8px 0;
-  color:rgba(255,245,220,0.76);
-}
-.vipd-checkoutRow.total{
-  margin-top:6px;
-  padding-top:14px;
-  border-top:1px solid rgba(255,255,255,0.08);
-}
-.vipd-checkoutRow strong{
-  color:#fff2cb;
-}
-
-.vipd-mainBtn{
-  margin-top:18px;
-  min-height:50px;
-  width:100%;
-  padding:12px 18px;
-  border:none;
-  border-radius:16px;
-  font-weight:900;
-  cursor:pointer;
-}
-.vipd-mainBtn.gold{
-  background:linear-gradient(90deg,#d4af37,#f0d48a);
-  color:#1a0014;
-}
-.vipd-mainBtn.diamond{
-  background:linear-gradient(90deg,#58b0ff,#9ce8ff);
-  color:#08141b;
-}
-
-.vipd-faqGrid{
-  margin-top:18px;
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:12px;
-}
-.vipd-faqItem{
-  padding:16px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-}
-.vipd-faqItem strong{
-  display:block;
-  color:#fff2cb;
-}
-.vipd-faqItem p{
-  margin:10px 0 0;
-  color:rgba(255,245,220,0.72);
-  line-height:1.75;
-}
-
-.vipd-loading{
-  height:100vh;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:#0a0005;
-}
-.vipd-loader{
-  width:64px;
-  height:64px;
-  border:6px solid rgba(212,175,55,0.2);
-  border-top:6px solid #d4af37;
-  border-radius:50%;
-  animation:spin 1.3s linear infinite;
-}
-@keyframes spin{
-  to{transform:rotate(360deg)}
-}
-
-@media (max-width: 980px){
-  .vipd-grid{
-    grid-template-columns:1fr;
-  }
-
-  .vipd-faqGrid{
-    grid-template-columns:1fr;
-  }
-}
-
-@media (max-width: 760px){
-  .vipd-title{
-    font-size:40px;
-  }
-
-  .vipd-hero{
-    align-items:flex-start;
-  }
-}
-
-@media (max-width: 560px){
-  .vipd-title{
-    font-size:34px;
-  }
-
-  .vipd-memberName{
-    font-size:30px;
-  }
-}
-`;

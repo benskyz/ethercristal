@@ -1,363 +1,430 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Crown,
+  Flame,
+  Menu,
+  MessageSquare,
+  RefreshCw,
+  Settings,
+  Shield,
+  ShoppingBag,
   Sparkles,
   Users,
-  ShoppingBag,
-  MessageCircle,
-  User,
-  Crown,
-  Shield,
-  RefreshCw,
-  ArrowRight,
+  Wand2,
+  Zap,
 } from "lucide-react";
+import Sidebar from "@/components/Sidebar";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import ProfileName, { DisplayProfile } from "@/components/ProfileName";
+import {
+  ensureProfileRecord,
+  isVipActive,
+  profileDisplayName,
+  type ProfileRow,
+} from "@/lib/profileCompat";
 
-const supabase = requireSupabaseBrowserClient();
-
-type Profile = DisplayProfile & {
-  id: string;
-  email?: string | null;
-  credits?: number | null;
-  vip_expires_at?: string | null;
-  created_at?: string | null;
-};
-
-type PresenceRow = {
-  id: string;
-  room_id: string;
-  user_id: string;
-  pseudo?: string | null;
-  updated_at?: string | null;
-};
-
-function cx(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("fr-CA", { year: "numeric", month: "long", day: "numeric" });
+function Tag({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-400/20 bg-red-500/10 text-red-100"
+      : tone === "green"
+      ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+      : tone === "gold"
+      ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
+      : tone === "violet"
+      ? "border-fuchsia-400/20 bg-fuchsia-500/10 text-fuchsia-100"
+      : "border-white/10 bg-white/[0.04] text-white/70";
+
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em]",
+        toneClass
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
-function isVipActive(vip_expires_at?: string | null) {
-  if (!vip_expires_at) return false;
-  const d = new Date(vip_expires_at);
-  if (Number.isNaN(d.getTime())) return false;
-  return d > new Date();
+function StatCard({
+  label,
+  value,
+  icon,
+  tone = "default",
+}: {
+  label: string;
+  value: number | string;
+  icon: ReactNode;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-500/14 bg-red-950/10"
+      : tone === "green"
+      ? "border-emerald-500/14 bg-emerald-950/10"
+      : tone === "gold"
+      ? "border-amber-500/14 bg-amber-950/10"
+      : tone === "violet"
+      ? "border-fuchsia-500/14 bg-fuchsia-950/10"
+      : "border-white/10 bg-black/20";
+
+  return (
+    <div
+      className={cx(
+        "rounded-[24px] border p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]",
+        toneClass
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+          {label}
+        </div>
+        <div className="text-white/60">{icon}</div>
+      </div>
+      <div className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </div>
+    </div>
+  );
+}
+
+function ActionCard({
+  title,
+  desc,
+  icon,
+  onClick,
+  tone = "default",
+}: {
+  title: string;
+  desc: string;
+  icon: ReactNode;
+  onClick: () => void;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-500/14 bg-red-950/10 hover:bg-red-900/16"
+      : tone === "green"
+      ? "border-emerald-500/14 bg-emerald-950/10 hover:bg-emerald-900/16"
+      : tone === "gold"
+      ? "border-amber-500/14 bg-amber-950/10 hover:bg-amber-900/16"
+      : tone === "violet"
+      ? "border-fuchsia-500/14 bg-fuchsia-950/10 hover:bg-fuchsia-900/16"
+      : "border-white/10 bg-black/20 hover:bg-black/30";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        "rounded-[26px] border p-6 text-left shadow-[0_14px_40px_rgba(0,0,0,0.25)] transition duration-300 hover:-translate-y-1",
+        toneClass
+      )}
+    >
+      <div className="mb-4 flex items-center gap-3">
+        <div className="grid h-12 w-12 place-items-center rounded-[18px] border border-white/10 bg-white/[0.04] text-white/75">
+          {icon}
+        </div>
+        <div className="text-base font-black uppercase tracking-[0.14em] text-white">
+          {title}
+        </div>
+      </div>
+      <div className="text-sm leading-6 text-white/58">{desc}</div>
+    </button>
+  );
 }
 
 export default function DashboardPage() {
   const router = useRouter();
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [roomsCount, setRoomsCount] = useState<number>(0);
-  const [presence, setPresence] = useState<PresenceRow[]>([]);
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [inventoryCount, setInventoryCount] = useState(0);
+  const [liveRoomsCount, setLiveRoomsCount] = useState(0);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
   const [error, setError] = useState("");
 
-  const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
-  const vipOk = isVipActive(profile?.vip_expires_at) || isAdmin;
-  const credits = profile?.credits ?? 0;
+  const statusLabel = useMemo(() => {
+    if (profile?.is_admin) return "ADMIN";
+    if (isVipActive(profile)) return "VIP";
+    return "MEMBRE";
+  }, [profile]);
 
-  const onlineCount = useMemo(() => {
-    const now = Date.now();
-    return presence.filter((p) => {
-      const t = p.updated_at ? new Date(p.updated_at).getTime() : 0;
-      return now - t < 60000;
-    }).length;
-  }, [presence]);
+  const loadDashboard = useCallback(
+    async (firstLoad = false) => {
+      try {
+        if (firstLoad) setLoading(true);
+        else setRefreshing(true);
 
-  async function loadAll(silent = false) {
-    if (!silent) setLoading(true);
-    setError("");
+        setError("");
 
-    const {
-      data: { user },
-      error: authErr,
-    } = await supabase.auth.getUser();
+        const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-    if (authErr || !user) {
-      router.replace("/enter");
-      return;
-    }
+        if (authError || !user) {
+          router.replace("/enter");
+          return;
+        }
 
-    const [pRes, roomsRes, presenceRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select(
-          "id, pseudo, email, credits, vip_expires_at, is_admin, role, created_at, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
-        )
-        .eq("id", user.id)
-        .maybeSingle(),
-      supabase.from("rooms").select("id"),
-      // no realtime, just pull once when dashboard loads / refresh
-      supabase.from("room_presence").select("id, room_id, user_id, pseudo, updated_at"),
-    ]);
+        const nextProfile = await ensureProfileRecord(user);
 
-    if (pRes.error) setError(pRes.error.message);
-    else setProfile((pRes.data as any) ?? null);
+        const [inventoryRes, liveRoomsRes, unreadRes] = await Promise.all([
+          supabase.from("inventory_items").select("id").eq("user_id", user.id),
+          supabase.from("rooms").select("id").eq("is_live", true),
+          supabase
+            .from("private_messages")
+            .select("id")
+            .eq("receiver_id", user.id)
+            .eq("is_read", false),
+        ]);
 
-    if (roomsRes.error) setError((prev) => prev || roomsRes.error!.message);
-    else setRoomsCount((roomsRes.data ?? []).length);
-
-    if (presenceRes.error) setError((prev) => prev || presenceRes.error!.message);
-    else setPresence((presenceRes.data ?? []) as PresenceRow[]);
-
-    if (!silent) setLoading(false);
-  }
+        setProfile(nextProfile);
+        setInventoryCount((inventoryRes.data ?? []).length);
+        setLiveRoomsCount((liveRoomsRes.data ?? []).length);
+        setUnreadMessagesCount((unreadRes.data ?? []).length);
+      } catch (err: any) {
+        setError(err?.message || "Impossible de charger le dashboard.");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [router]
+  );
 
   useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadDashboard(true);
+  }, [loadDashboard]);
 
-  async function refresh() {
-    setRefreshing(true);
-    await loadAll(true);
-    setRefreshing(false);
-  }
-
-  const cards = [
-    {
-      title: "Salons",
-      value: roomsCount,
-      hint: "Espaces disponibles",
-      icon: Users,
-      tone: "from-cyan-500/18 to-cyan-500/[0.03]",
-      onClick: () => router.push("/salons"),
-      cta: "Voir les salons",
-    },
-    {
-      title: "Présence",
-      value: onlineCount,
-      hint: "En ligne (live)",
-      icon: Sparkles,
-      tone: "from-emerald-500/18 to-emerald-500/[0.03]",
-      onClick: () => router.push("/salons"),
-      cta: "Rejoindre",
-    },
-    {
-      title: "Crédits",
-      value: credits,
-      hint: vipOk ? "VIP actif" : "Standard",
-      icon: ShoppingBag,
-      tone: "from-amber-500/18 to-amber-500/[0.03]",
-      onClick: () => router.push("/boutique"),
-      cta: "Boutique",
-    },
-  ] as const;
-
-  return (
-    <div className="space-y-6">
-      {/* Hero same vibe as /enter */}
-      <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
-              <Sparkles className="h-3.5 w-3.5" />
-              Dashboard
-            </div>
-
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
-              Ton espace privé
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
-              Tout est propre, centré, premium. Aucun aperçu webcam ici — les cams restent dans les salles.
-            </p>
-
-            <div className="mt-6 rounded-[28px] border border-white/10 bg-black/30 p-5">
-              {profile ? (
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.22em] text-white/40">Identité</div>
-                    <div className="mt-2">
-                      <ProfileName profile={profile} size="lg" showTitle showBadge />
-                    </div>
-                    <div className="mt-3 text-sm text-white/55">
-                      Compte créé le {formatDate(profile.created_at)}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                      {credits} crédits
-                    </span>
-                    <span
-                      className={cx(
-                        "rounded-full border px-3 py-1 text-xs font-black",
-                        vipOk
-                          ? "border-amber-400/20 bg-amber-500/10 text-amber-200"
-                          : "border-white/10 bg-white/10 text-white/55"
-                      )}
-                    >
-                      {vipOk ? "VIP actif" : "Standard"}
-                    </span>
-                    {isAdmin ? (
-                      <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs font-black text-violet-200">
-                        Admin
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-white/60">Chargement…</div>
-              )}
-            </div>
+  if (loading) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
+        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
           </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={refreshing}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/85 hover:bg-white/10 disabled:opacity-70"
-            >
-              <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
-              Actualiser
-            </button>
-
-            {isAdmin ? (
-              <button
-                type="button"
-                onClick={() => router.push("/admin")}
-                className="inline-flex items-center gap-2 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm font-black text-violet-200 hover:bg-violet-500/15"
-              >
-                <Shield className="h-4 w-4" />
-                Admin
-              </button>
-            ) : null}
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            EtherCristal
           </div>
-        </div>
-      </section>
-
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      ) : null}
-
-      {/* Stats cards */}
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-[160px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-3">
-          {cards.map((c) => {
-            const Icon = c.icon;
-            return (
-              <button
-                key={c.title}
-                onClick={c.onClick}
-                className={cx(
-                  "group text-left rounded-[28px] border border-white/10 bg-gradient-to-br p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/[0.06]",
-                  c.tone
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-                      {c.title}
-                    </div>
-                    <div className="mt-2 text-3xl font-black text-white">{c.value}</div>
-                    <div className="mt-1 text-sm text-white/60">{c.hint}</div>
-                  </div>
-
-                  <div className="grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/5">
-                    <Icon className="h-5 w-5 text-white/80" />
-                  </div>
-                </div>
-
-                <div className="mt-5 inline-flex items-center gap-2 text-sm font-black text-white/85">
-                  {c.cta}
-                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Quick actions (clean) */}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <QuickAction
-          title="Salons"
-          desc="Entrer dans les salles et rejoindre un emplacement."
-          icon={<Users className="h-5 w-5" />}
-          onClick={() => router.push("/salons")}
-        />
-        <QuickAction
-          title="Boutique"
-          desc="Acheter et activer tes effets de nom."
-          icon={<ShoppingBag className="h-5 w-5" />}
-          onClick={() => router.push("/boutique")}
-        />
-        <QuickAction
-          title="Messages"
-          desc="Ouvrir tes conversations privées."
-          icon={<MessageCircle className="h-5 w-5" />}
-          onClick={() => router.push("/messages")}
-        />
-        <QuickAction
-          title="Profil"
-          desc="Voir ton compte et ton statut."
-          icon={<User className="h-5 w-5" />}
-          onClick={() => router.push("/profile")}
-        />
-        <QuickAction
-          title="VIP"
-          desc="Activer ton accès premium."
-          icon={<Crown className="h-5 w-5" />}
-          onClick={() => router.push("/vip")}
-        />
-        <QuickAction
-          title="Désir Intense"
-          desc="Accéder à l’espace dédié (premium)."
-          icon={<Sparkles className="h-5 w-5" />}
-          onClick={() => router.push("/desir")}
-        />
-      </section>
-    </div>
-  );
-}
-
-function QuickAction({
-  title,
-  desc,
-  icon,
-  onClick,
-}: {
-  title: string;
-  desc: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="group rounded-[28px] border border-white/10 bg-white/[0.04] p-6 text-left shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/[0.06]"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-2xl font-black text-white">{title}</h3>
-          <p className="mt-2 text-sm leading-6 text-white/60">{desc}</p>
-        </div>
-        <div className="grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/5 text-white/85">
-          {icon}
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Dashboard...
+          </h1>
         </div>
       </div>
-      <div className="mt-5 h-1 w-12 rounded-full bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 transition-all duration-300 group-hover:w-28" />
-    </button>
+    );
+  }
+
+  return (
+    <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+      <div className="relative min-h-screen lg:pl-[290px]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+          <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+          <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
+        </div>
+
+        <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+          <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <Menu className="h-4 w-4" />
+              Menu
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void loadDashboard(false)}
+              className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+              Refresh
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-[32px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)] sm:p-8">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
+
+              <div className="relative z-10">
+                <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                  espace membre
+                </div>
+
+                <h1 className="mt-3 text-4xl font-black tracking-[-0.04em] text-white md:text-6xl">
+                  Bienvenue
+                </h1>
+
+                <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                  <span className="font-black text-white">
+                    {profileDisplayName(profile)}
+                  </span>
+                  <span className="text-white/20">•</span>
+                  <span>
+                    crédits <span className="font-black text-white">{profile?.credits ?? 0}</span>
+                  </span>
+                  <span className="text-white/20">•</span>
+                  <span>
+                    rôle <span className="font-black text-white">{profile?.role ?? "member"}</span>
+                  </span>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Tag tone={profile?.is_admin ? "red" : isVipActive(profile) ? "gold" : "default"}>
+                    {statusLabel}
+                  </Tag>
+
+                  {profile?.master_title ? (
+                    <Tag tone="violet">{profile.master_title}</Tag>
+                  ) : null}
+
+                  {profile?.active_name_fx_key ? (
+                    <Tag tone="green">
+                      <Zap className="h-3.5 w-3.5" />
+                      {profile.active_name_fx_key}
+                    </Tag>
+                  ) : null}
+
+                  {profile?.active_badge_key ? (
+                    <Tag tone="gold">
+                      <Crown className="h-3.5 w-3.5" />
+                      {profile.active_badge_key}
+                    </Tag>
+                  ) : null}
+                </div>
+
+                {error ? (
+                  <div className="mt-5 rounded-[18px] border border-red-400/18 bg-red-500/10 px-4 py-4 text-sm text-red-100">
+                    {error}
+                  </div>
+                ) : null}
+
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    onClick={() => void loadDashboard(false)}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-red-500/14 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-red-900/16"
+                  >
+                    <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+                    {refreshing ? "Actualisation..." : "Actualiser"}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Crédits"
+                value={profile?.credits ?? 0}
+                icon={<Sparkles className="h-4 w-4" />}
+                tone="gold"
+              />
+              <StatCard
+                label="Messages non lus"
+                value={unreadMessagesCount}
+                icon={<MessageSquare className="h-4 w-4" />}
+                tone="violet"
+              />
+              <StatCard
+                label="Items inventaire"
+                value={inventoryCount}
+                icon={<Wand2 className="h-4 w-4" />}
+                tone="green"
+              />
+              <StatCard
+                label="Salons live"
+                value={liveRoomsCount}
+                icon={<Users className="h-4 w-4" />}
+                tone="red"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <ActionCard
+                title="Désir intense"
+                desc="Cam-to-cam aléatoire et accès direct au module principal."
+                icon={<Flame className="h-5 w-5" />}
+                onClick={() => router.push("/desir")}
+                tone="red"
+              />
+
+              <ActionCard
+                title="Salons webcam"
+                desc="Voir les rooms actives, rejoindre et suivre le live."
+                icon={<Users className="h-5 w-5" />}
+                onClick={() => router.push("/salons")}
+                tone="violet"
+              />
+
+              <ActionCard
+                title="Messages"
+                desc="Retrouver tes discussions privées en temps réel."
+                icon={<MessageSquare className="h-5 w-5" />}
+                onClick={() => router.push("/messages")}
+                tone="default"
+              />
+
+              <ActionCard
+                title="Boutique"
+                desc="Effets, badges, titres et achats du compte."
+                icon={<ShoppingBag className="h-5 w-5" />}
+                onClick={() => router.push("/boutique")}
+                tone="gold"
+              />
+
+              <ActionCard
+                title="Inventaire"
+                desc="Équiper tes effets actifs et gérer ton style."
+                icon={<Wand2 className="h-5 w-5" />}
+                onClick={() => router.push("/inventaire")}
+                tone="green"
+              />
+
+              <ActionCard
+                title="Options"
+                desc="Compte, préférences et réglages personnels."
+                icon={<Settings className="h-5 w-5" />}
+                onClick={() => router.push("/options")}
+                tone="default"
+              />
+
+              {profile?.is_admin ? (
+                <ActionCard
+                  title="Administration"
+                  desc="Accès complet au hub admin, sécurité, reports et paiements."
+                  icon={<Shield className="h-5 w-5" />}
+                  onClick={() => router.push("/admin")}
+                  tone="red"
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

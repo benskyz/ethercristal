@@ -1,931 +1,289 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
+import Sidebar from "@/components/Sidebar";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import {
+  Activity,
+  AlertTriangle,
+  BadgeCheck,
+  Bell,
+  CreditCard,
+  FileSearch,
+  FileText,
+  Flame,
+  LayoutDashboard,
+  Lock,
+  Megaphone,
+  Menu,
+  RefreshCw,
+  Settings2,
+  Shield,
+  Sparkles,
+  Users,
+  Video,
+  Wallet,
+  Wrench,
+} from "lucide-react";
 
-const supabase = requireSupabaseBrowserClient();
-
-type ProfileRow = {
+type AdminProfile = {
   id: string;
-  pseudo?: string | null;
-  email?: string | null;
-  credits?: number | null;
-  is_vip?: boolean | null;
-  is_admin?: boolean | null;
-  is_banned?: boolean | null;
-  role?: string | null;
-  created_at?: string | null;
+  pseudo: string;
+  credits: number;
+  isVip: boolean;
+  isAdmin: boolean;
+  vipExpiresAt: string | null;
+  role: string;
+  masterTitle: string;
 };
 
-type RoomRow = {
-  id: string;
-  title?: string | null;
-  description?: string | null;
-  is_live?: boolean | null;
-  is_vip?: boolean | null;
-  members_count?: number | null;
-  created_at?: string | null;
-};
+type FlashState =
+  | {
+      tone: "success" | "error";
+      text: string;
+    }
+  | null;
 
-type AdminLogRow = {
-  id: string;
-  actor_id: string;
-  action: string;
-  target_type?: string | null;
-  target_id?: string | null;
-  details?: string | null;
-  created_at?: string | null;
+type OverviewState = {
+  members: number;
+  vip: number;
+  reports: number;
+  liveRooms: number;
+  desirSessions: number;
+  payments: number;
+  revenue: number;
+  contentBlocks: number;
+  settings: number;
+  verifications: number;
 };
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("fr-CA", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function sanitizeText(value: string | null | undefined, fallback = "") {
+  const clean = (value || "").trim();
+  return clean || fallback;
 }
 
-export default function AdminPage() {
-  const router = useRouter();
+function isSchemaMismatch(error: any) {
+  const code = error?.code;
+  return code === "42703" || code === "42P01";
+}
 
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
+function moneyFormat(amount: number, currency = "CAD") {
+  try {
+    return new Intl.NumberFormat("fr-CA", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}
 
-  const [adminProfile, setAdminProfile] = useState<ProfileRow | null>(null);
-  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
-  const [rooms, setRooms] = useState<RoomRow[]>([]);
-  const [logs, setLogs] = useState<AdminLogRow[]>([]);
+async function loadAdminProfileCompat(userId: string): Promise<AdminProfile | null> {
+  const supabase = requireSupabaseBrowserClient();
 
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const snake = await supabase
+    .from("profiles")
+    .select(
+      "id, pseudo, credits, is_vip, is_admin, vip_expires_at, role, master_title"
+    )
+    .eq("id", userId)
+    .maybeSingle();
 
-  const [userSearch, setUserSearch] = useState("");
-  const [roomSearch, setRoomSearch] = useState("");
-
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [creditsInput, setCreditsInput] = useState("100");
-
-  const [newRoomTitle, setNewRoomTitle] = useState("");
-  const [newRoomDescription, setNewRoomDescription] = useState("");
-  const [newRoomVip, setNewRoomVip] = useState(false);
-  const [newRoomLive, setNewRoomLive] = useState(false);
-
-  async function loadAll() {
-    setLoading(true);
-    setError("");
-    setMessage("");
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      router.push("/enter");
-      return;
-    }
-
-    const [meRes, profilesRes, roomsRes, logsRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select("id, pseudo, email, credits, is_vip, is_admin, is_banned, role, created_at")
-        .eq("id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("profiles")
-        .select("id, pseudo, email, credits, is_vip, is_admin, is_banned, role, created_at")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("rooms")
-        .select("id, title, description, is_live, is_vip, members_count, created_at")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("admin_logs")
-        .select("id, actor_id, action, target_type, target_id, details, created_at")
-        .order("created_at", { ascending: false })
-        .limit(30),
-    ]);
-
-    if (meRes.error) {
-      setError(meRes.error.message);
-      setLoading(false);
-      return;
-    }
-
-    const me = (meRes.data as ProfileRow | null) ?? null;
-    const isAdmin = Boolean(me?.is_admin || me?.role === "admin");
-
-    if (!isAdmin) {
-      router.push("/dashboard");
-      return;
-    }
-
-    setAdminProfile(me);
-    setProfiles((profilesRes.data as ProfileRow[]) ?? []);
-    setRooms((roomsRes.data as RoomRow[]) ?? []);
-    setLogs((logsRes.data as AdminLogRow[]) ?? []);
-    setLoading(false);
+  if (!snake.error && snake.data) {
+    return {
+      id: snake.data.id,
+      pseudo: sanitizeText(snake.data.pseudo, "Membre Ether"),
+      credits: Number(snake.data.credits ?? 0),
+      isVip: Boolean(snake.data.is_vip),
+      isAdmin: Boolean(snake.data.is_admin),
+      vipExpiresAt: snake.data.vip_expires_at ?? null,
+      role: sanitizeText(snake.data.role, "member"),
+      masterTitle: sanitizeText(snake.data.master_title, "Aucun titre"),
+    };
   }
 
-  useEffect(() => {
-    loadAll();
-  }, []);
-
-  async function createLog(
-    actorId: string,
-    action: string,
-    targetType?: string,
-    targetId?: string,
-    details?: string
-  ) {
-    await supabase.from("admin_logs").insert({
-      actor_id: actorId,
-      action,
-      target_type: targetType ?? null,
-      target_id: targetId ?? null,
-      details: details ?? null,
-    });
+  if (snake.error && !isSchemaMismatch(snake.error)) {
+    throw snake.error;
   }
 
-  const filteredProfiles = useMemo(() => {
-    const q = userSearch.trim().toLowerCase();
-    if (!q) return profiles;
+  const camel = await supabase
+    .from("profiles")
+    .select(
+      'id, username, "etherBalance", "isPremium", "isAdmin", "premiumExpiresAt", role, "masterTitle"'
+    )
+    .eq("id", userId)
+    .maybeSingle();
 
-    return profiles.filter((p) =>
-      [
-        p.pseudo ?? "",
-        p.email ?? "",
-        p.id ?? "",
-        p.role ?? "",
-        p.is_vip ? "vip" : "",
-        p.is_admin ? "admin" : "",
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [profiles, userSearch]);
+  if (!camel.error && camel.data) {
+    return {
+      id: camel.data.id,
+      pseudo: sanitizeText(camel.data.username, "Membre Ether"),
+      credits: Number(camel.data.etherBalance ?? 0),
+      isVip: Boolean(camel.data.isPremium),
+      isAdmin: Boolean(camel.data.isAdmin),
+      vipExpiresAt: camel.data.premiumExpiresAt ?? null,
+      role: sanitizeText(camel.data.role, "member"),
+      masterTitle: sanitizeText(camel.data.masterTitle, "Aucun titre"),
+    };
+  }
 
-  const filteredRooms = useMemo(() => {
-    const q = roomSearch.trim().toLowerCase();
-    if (!q) return rooms;
+  if (camel.error && !isSchemaMismatch(camel.error)) {
+    throw camel.error;
+  }
 
-    return rooms.filter((r) =>
-      [r.title ?? "", r.description ?? ""].join(" ").toLowerCase().includes(q)
-    );
-  }, [rooms, roomSearch]);
+  return null;
+}
 
-  const selectedUser = useMemo(
-    () => profiles.find((p) => p.id === selectedUserId) ?? null,
-    [profiles, selectedUserId]
+async function safeCount(
+  table: string,
+  build?: (query: any) => any
+): Promise<number> {
+  const supabase = requireSupabaseBrowserClient();
+
+  let query = supabase.from(table).select("*", { count: "exact", head: true });
+  if (build) query = build(query);
+
+  const res = await query;
+
+  if (res.error) {
+    if (isSchemaMismatch(res.error)) return 0;
+    throw res.error;
+  }
+
+  return res.count ?? 0;
+}
+
+async function safeRevenueFromTable(
+  table: string,
+  amountField: string
+): Promise<{ total: number; count: number }> {
+  const supabase = requireSupabaseBrowserClient();
+  const res = await supabase.from(table).select(`id, ${amountField}`).limit(1000);
+
+  if (res.error) {
+    if (isSchemaMismatch(res.error)) return { total: 0, count: 0 };
+    throw res.error;
+  }
+
+  const rows = (res.data ?? []) as Array<Record<string, any>>;
+  const total = rows.reduce((sum, row) => sum + Number(row?.[amountField] ?? 0), 0);
+
+  return {
+    total,
+    count: rows.length,
+  };
+}
+
+async function countVipProfiles(): Promise<number> {
+  const snake = await safeCount("profiles", (q) => q.eq("is_vip", true)).catch(
+    () => 0
   );
+  if (snake > 0) return snake;
 
-  const totalUsers = profiles.length;
-  const vipUsers = profiles.filter((p) => Boolean(p.is_vip)).length;
-  const adminUsers = profiles.filter((p) => Boolean(p.is_admin || p.role === "admin")).length;
-  const bannedUsers = profiles.filter((p) => Boolean(p.is_banned)).length;
-  const liveRooms = rooms.filter((r) => Boolean(r.is_live)).length;
-  const vipRooms = rooms.filter((r) => Boolean(r.is_vip)).length;
-  const totalCredits = profiles.reduce((sum, p) => sum + Number(p.credits ?? 0), 0);
+  return safeCount("profiles", (q) => q.eq("isPremium", true)).catch(() => 0);
+}
 
-  async function toggleVip(user: ProfileRow) {
-    if (!adminProfile?.id) return;
+async function countLiveRooms(): Promise<number> {
+  const snake = await safeCount("rooms", (q) => q.eq("is_live", true)).catch(
+    () => 0
+  );
+  if (snake > 0) return snake;
 
-    const nextValue = !user.is_vip;
-    const ok = window.confirm(
-      nextValue
-        ? `Donner le VIP à ${user.pseudo || user.email || "cet utilisateur"} ?`
-        : `Retirer le VIP à ${user.pseudo || user.email || "cet utilisateur"} ?`
-    );
-    if (!ok) return;
+  return safeCount("rooms", (q) => q.eq("isLive", true)).catch(() => 0);
+}
 
-    setBusy(`vip-${user.id}`);
-    setError("");
-    setMessage("");
+async function countAllReports(): Promise<number> {
+  const a = await safeCount("reports").catch(() => 0);
+  const b = await safeCount("desir_session_reports").catch(() => 0);
+  return a + b;
+}
 
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ is_vip: nextValue })
-        .eq("id", user.id);
+async function countSettingsCompat(): Promise<number> {
+  const a = await safeCount("site_settings").catch(() => 0);
+  if (a > 0) return a;
+  return safeCount("app_settings").catch(() => 0);
+}
 
-      if (error) throw new Error(error.message);
+async function countContentCompat(): Promise<number> {
+  const a = await safeCount("content_blocks").catch(() => 0);
+  if (a > 0) return a;
+  return safeCount("site_content").catch(() => 0);
+}
 
-      await createLog(
-        adminProfile.id,
-        nextValue ? "grant_vip" : "remove_vip",
-        "profile",
-        user.id,
-        user.pseudo || user.email || user.id
-      );
+async function countVerificationCompat(): Promise<number> {
+  const a = await safeCount("verification_requests").catch(() => 0);
+  const b = await safeCount("profile_verifications").catch(() => 0);
+  return a + b;
+}
 
-      setProfiles((prev) =>
-        prev.map((p) => (p.id === user.id ? { ...p, is_vip: nextValue } : p))
-      );
+async function revenueCompat(): Promise<{ total: number; count: number }> {
+  const payments = await safeRevenueFromTable("payments", "amount").catch(() => ({
+    total: 0,
+    count: 0,
+  }));
+  if (payments.count > 0 || payments.total > 0) return payments;
 
-      setMessage(nextValue ? "VIP activé." : "VIP retiré.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur VIP.");
-    } finally {
-      setBusy(null);
-    }
-  }
+  return safeRevenueFromTable("transactions", "amount").catch(() => ({
+    total: 0,
+    count: 0,
+  }));
+}
 
-  async function toggleAdmin(user: ProfileRow) {
-    if (!adminProfile?.id) return;
-
-    const nextValue = !Boolean(user.is_admin);
-    const ok = window.confirm(
-      nextValue
-        ? `Donner les droits admin à ${user.pseudo || user.email || "cet utilisateur"} ?`
-        : `Retirer les droits admin à ${user.pseudo || user.email || "cet utilisateur"} ?`
-    );
-    if (!ok) return;
-
-    setBusy(`admin-${user.id}`);
-    setError("");
-    setMessage("");
-
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          is_admin: nextValue,
-          role: nextValue ? "admin" : "member",
-        })
-        .eq("id", user.id);
-
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        nextValue ? "grant_admin" : "remove_admin",
-        "profile",
-        user.id,
-        user.pseudo || user.email || user.id
-      );
-
-      setProfiles((prev) =>
-        prev.map((p) =>
-          p.id === user.id
-            ? { ...p, is_admin: nextValue, role: nextValue ? "admin" : "member" }
-            : p
-        )
-      );
-
-      setMessage(nextValue ? "Admin activé." : "Admin retiré.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur admin.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggleBan(user: ProfileRow) {
-    if (!adminProfile?.id) return;
-
-    const nextValue = !Boolean(user.is_banned);
-    const ok = window.confirm(
-      nextValue
-        ? `Bannir ${user.pseudo || user.email || "cet utilisateur"} ?`
-        : `Débannir ${user.pseudo || user.email || "cet utilisateur"} ?`
-    );
-    if (!ok) return;
-
-    setBusy(`ban-${user.id}`);
-    setError("");
-    setMessage("");
-
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ is_banned: nextValue })
-        .eq("id", user.id);
-
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        nextValue ? "ban_user" : "unban_user",
-        "profile",
-        user.id,
-        user.pseudo || user.email || user.id
-      );
-
-      setProfiles((prev) =>
-        prev.map((p) => (p.id === user.id ? { ...p, is_banned: nextValue } : p))
-      );
-
-      setMessage(nextValue ? "Utilisateur banni." : "Utilisateur débanni.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur ban.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function adjustCredits() {
-    if (!adminProfile?.id) return;
-    if (!selectedUser) {
-      setError("Choisis un utilisateur.");
-      return;
-    }
-
-    const amount = Number(creditsInput);
-    if (!Number.isFinite(amount) || amount === 0) {
-      setError("Entre un montant valide, ex: 100 ou -50.");
-      return;
-    }
-
-    const nextCredits = Math.max(0, Number(selectedUser.credits ?? 0) + amount);
-    const ok = window.confirm(
-      `Modifier les crédits de ${selectedUser.pseudo || selectedUser.email || "cet utilisateur"} à ${nextCredits} ?`
-    );
-    if (!ok) return;
-
-    setBusy("credits");
-    setError("");
-    setMessage("");
-
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ credits: nextCredits })
-        .eq("id", selectedUser.id);
-
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        "adjust_credits",
-        "profile",
-        selectedUser.id,
-        `${selectedUser.pseudo || selectedUser.email || selectedUser.id} => ${nextCredits}`
-      );
-
-      setProfiles((prev) =>
-        prev.map((p) =>
-          p.id === selectedUser.id ? { ...p, credits: nextCredits } : p
-        )
-      );
-
-      setMessage("Crédits mis à jour.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur crédits.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function createRoom() {
-    if (!adminProfile?.id) return;
-    setBusy("create-room");
-    setError("");
-    setMessage("");
-
-    try {
-      const title = newRoomTitle.trim();
-      if (!title) {
-        throw new Error("Le titre du salon est requis.");
-      }
-
-      const { error } = await supabase.from("rooms").insert({
-        title,
-        description: newRoomDescription.trim() || null,
-        is_live: newRoomLive,
-        is_vip: newRoomVip,
-        members_count: 0,
-      });
-
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        "create_room",
-        "room",
-        null,
-        title
-      );
-
-      setNewRoomTitle("");
-      setNewRoomDescription("");
-      setNewRoomVip(false);
-      setNewRoomLive(false);
-
-      setMessage("Salon créé.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur création salon.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function deleteRoom(room: RoomRow) {
-    if (!adminProfile?.id) return;
-
-    const ok = window.confirm(
-      `Supprimer définitivement le salon "${room.title || "Sans titre"}" ?`
-    );
-    if (!ok) return;
-
-    setBusy(`delete-room-${room.id}`);
-    setError("");
-    setMessage("");
-
-    try {
-      const { error } = await supabase.from("rooms").delete().eq("id", room.id);
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        "delete_room",
-        "room",
-        room.id,
-        room.title || room.id
-      );
-
-      setRooms((prev) => prev.filter((r) => r.id !== room.id));
-      setMessage("Salon supprimé.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur suppression salon.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggleRoomLive(room: RoomRow) {
-    if (!adminProfile?.id) return;
-    setBusy(`live-room-${room.id}`);
-    setError("");
-    setMessage("");
-
-    try {
-      const nextValue = !Boolean(room.is_live);
-
-      const { error } = await supabase
-        .from("rooms")
-        .update({ is_live: nextValue })
-        .eq("id", room.id);
-
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        nextValue ? "room_live_on" : "room_live_off",
-        "room",
-        room.id,
-        room.title || room.id
-      );
-
-      setRooms((prev) =>
-        prev.map((r) => (r.id === room.id ? { ...r, is_live: nextValue } : r))
-      );
-
-      setMessage(nextValue ? "Salon mis en live." : "Salon retiré du live.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur live salon.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggleRoomVip(room: RoomRow) {
-    if (!adminProfile?.id) return;
-
-    const nextValue = !Boolean(room.is_vip);
-    const ok = window.confirm(
-      nextValue
-        ? `Rendre le salon "${room.title || "Sans titre"}" VIP ?`
-        : `Retirer le mode VIP du salon "${room.title || "Sans titre"}" ?`
-    );
-    if (!ok) return;
-
-    setBusy(`vip-room-${room.id}`);
-    setError("");
-    setMessage("");
-
-    try {
-      const { error } = await supabase
-        .from("rooms")
-        .update({ is_vip: nextValue })
-        .eq("id", room.id);
-
-      if (error) throw new Error(error.message);
-
-      await createLog(
-        adminProfile.id,
-        nextValue ? "room_vip_on" : "room_vip_off",
-        "room",
-        room.id,
-        room.title || room.id
-      );
-
-      setRooms((prev) =>
-        prev.map((r) => (r.id === room.id ? { ...r, is_vip: nextValue } : r))
-      );
-
-      setMessage(nextValue ? "Salon VIP activé." : "Salon VIP retiré.");
-      loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur VIP salon.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="h-36 animate-pulse rounded-[32px] border border-white/10 bg-white/5" />
-        <div className="grid gap-4 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 animate-pulse rounded-[24px] border border-white/10 bg-white/5" />
-          ))}
-        </div>
-        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="h-[650px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-          <div className="h-[650px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-        </div>
-      </div>
-    );
-  }
+function Tag({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-400/20 bg-red-500/10 text-red-100"
+      : tone === "green"
+      ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+      : tone === "gold"
+      ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
+      : tone === "violet"
+      ? "border-fuchsia-400/20 bg-fuchsia-500/10 text-fuchsia-100"
+      : "border-white/10 bg-white/[0.04] text-white/70";
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl sm:p-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.14),transparent_25%),radial-gradient(circle_at_bottom_left,rgba(255,170,60,0.10),transparent_30%)]" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
-              Admin
-            </div>
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
-              Contrôle complet de la plateforme
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62 sm:text-base">
-              Utilisateurs, salons, crédits, VIP, bans et logs, avec confirmations avant les actions lourdes.
-            </p>
-          </div>
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em]",
+        toneClass
+      )}
+    >
+      {children}
+    </span>
+  );
+}
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-white/40">Admin connecté</p>
-            <p className="mt-1 text-lg font-black text-white">
-              {adminProfile?.pseudo || adminProfile?.email || "Administrateur"}
-            </p>
-          </div>
-        </div>
-      </section>
+function FlashBanner({ flash }: { flash: FlashState }) {
+  if (!flash) return null;
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Utilisateurs" value={totalUsers} />
-        <StatCard label="VIP" value={vipUsers} />
-        <StatCard label="Admins" value={adminUsers} />
-        <StatCard label="Bannis" value={bannedUsers} />
-        <StatCard label="Salons" value={rooms.length} />
-        <StatCard label="Salons live" value={liveRooms} />
-        <StatCard label="Salons VIP" value={vipRooms} />
-        <StatCard label="Crédits totaux" value={totalCredits} />
-      </section>
-
-      {message ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-          {message}
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <section className="space-y-6">
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-2xl font-black text-white">Utilisateurs</h2>
-                <p className="mt-1 text-sm text-white/58">
-                  Recherche, sélection et actions rapides.
-                </p>
-              </div>
-
-              <input
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                placeholder="Chercher un utilisateur..."
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35 md:max-w-sm"
-              />
-            </div>
-
-            <div className="mt-5 max-h-[480px] space-y-3 overflow-auto pr-1">
-              {filteredProfiles.map((user) => {
-                const selected = selectedUserId === user.id;
-
-                return (
-                  <button
-                    key={user.id}
-                    type="button"
-                    onClick={() => setSelectedUserId(user.id)}
-                    className={cx(
-                      "w-full rounded-2xl border p-4 text-left transition",
-                      selected
-                        ? "border-rose-400/25 bg-white/10"
-                        : "border-white/10 bg-white/5 hover:bg-white/10"
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-base font-bold text-white">
-                          {user.pseudo || "Sans pseudo"}
-                        </p>
-                        <p className="mt-1 text-xs text-white/45">
-                          {user.email || user.id}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {user.is_admin ? (
-                          <span className="rounded-full border border-red-400/20 bg-red-500/10 px-2.5 py-1 text-[10px] font-bold text-red-300">
-                            ADMIN
-                          </span>
-                        ) : null}
-                        {user.is_vip ? (
-                          <span className="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-2.5 py-1 text-[10px] font-bold text-yellow-300">
-                            VIP
-                          </span>
-                        ) : null}
-                        {user.is_banned ? (
-                          <span className="rounded-full border border-red-400/20 bg-red-500/10 px-2.5 py-1 text-[10px] font-bold text-red-300">
-                            BANNI
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-4 text-sm text-white/58">
-                      <span>Crédits : {user.credits ?? 0}</span>
-                      <span>Rôle : {user.role || "member"}</span>
-                      <span>Créé : {formatDate(user.created_at)}</span>
-                    </div>
-                  </button>
-                );
-              })}
-
-              {filteredProfiles.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/55">
-                  Aucun utilisateur trouvé.
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-2xl font-black text-white">Salons</h2>
-                <p className="mt-1 text-sm text-white/58">
-                  Création, live, VIP et suppression.
-                </p>
-              </div>
-
-              <input
-                value={roomSearch}
-                onChange={(e) => setRoomSearch(e.target.value)}
-                placeholder="Chercher un salon..."
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35 md:max-w-sm"
-              />
-            </div>
-
-            <div className="mt-5 grid gap-3">
-              {filteredRooms.map((room) => (
-                <div
-                  key={room.id}
-                  className="rounded-2xl border border-white/10 bg-white/5 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-base font-bold text-white">
-                        {room.title || "Salon"}
-                      </h3>
-                      <p className="mt-1 text-sm text-white/55">
-                        {room.description || "Sans description"}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-white/45">
-                        <span>{room.members_count ?? 0} présent(s)</span>
-                        <span>{formatDate(room.created_at)}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={busy === `live-room-${room.id}`}
-                        onClick={() => toggleRoomLive(room)}
-                        className={cx(
-                          "rounded-xl px-3 py-2 text-xs font-bold transition",
-                          room.is_live
-                            ? "border border-emerald-400/20 bg-emerald-500/10 text-emerald-300"
-                            : "border border-white/10 bg-white/10 text-white/70"
-                        )}
-                      >
-                        {busy === `live-room-${room.id}` ? "..." : room.is_live ? "LIVE" : "OFF"}
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={busy === `vip-room-${room.id}`}
-                        onClick={() => toggleRoomVip(room)}
-                        className="rounded-xl border border-yellow-400/20 bg-yellow-500/10 px-3 py-2 text-xs font-bold text-yellow-300 transition"
-                      >
-                        {busy === `vip-room-${room.id}` ? "..." : "VIP"}
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={busy === `delete-room-${room.id}`}
-                        onClick={() => deleteRoom(room)}
-                        className="rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300 transition"
-                      >
-                        {busy === `delete-room-${room.id}` ? "..." : "Supprimer"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {filteredRooms.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/55">
-                  Aucun salon trouvé.
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </section>
-
-        <aside className="space-y-6">
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <h2 className="text-2xl font-black text-white">Actions utilisateur</h2>
-            <p className="mt-1 text-sm text-white/58">
-              Sélectionne un membre à gauche pour agir dessus.
-            </p>
-
-            <div className="mt-5 space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/40">Cible</p>
-                <p className="mt-2 text-sm font-bold text-white">
-                  {selectedUser
-                    ? `${selectedUser.pseudo || "Sans pseudo"} — ${selectedUser.email || selectedUser.id}`
-                    : "Aucun utilisateur sélectionné"}
-                </p>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-white/70">
-                  Ajuster les crédits
-                </label>
-                <input
-                  value={creditsInput}
-                  onChange={(e) => setCreditsInput(e.target.value)}
-                  placeholder="Ex: 100 ou -50"
-                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/35"
-                />
-              </div>
-
-              <button
-                type="button"
-                disabled={busy === "credits" || !selectedUser}
-                onClick={adjustCredits}
-                className="w-full rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 px-4 py-3 text-sm font-black text-white transition hover:opacity-95 disabled:opacity-60"
-              >
-                {busy === "credits" ? "Traitement..." : "Modifier les crédits"}
-              </button>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  disabled={!selectedUser || busy === `vip-${selectedUser?.id}`}
-                  onClick={() => selectedUser && toggleVip(selectedUser)}
-                  className="rounded-2xl border border-yellow-400/20 bg-yellow-500/10 px-4 py-3 text-sm font-black text-yellow-300 transition hover:bg-yellow-500/15 disabled:opacity-60"
-                >
-                  {selectedUser?.is_vip ? "Retirer VIP" : "Donner VIP"}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!selectedUser || busy === `admin-${selectedUser?.id}`}
-                  onClick={() => selectedUser && toggleAdmin(selectedUser)}
-                  className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300 transition hover:bg-red-500/15 disabled:opacity-60"
-                >
-                  {selectedUser?.is_admin ? "Retirer admin" : "Donner admin"}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!selectedUser || busy === `ban-${selectedUser?.id}`}
-                  onClick={() => selectedUser && toggleBan(selectedUser)}
-                  className="sm:col-span-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white transition hover:bg-white/15 disabled:opacity-60"
-                >
-                  {selectedUser?.is_banned ? "Débannir" : "Bannir"}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <h2 className="text-2xl font-black text-white">Créer un salon</h2>
-
-            <div className="mt-5 space-y-4">
-              <input
-                value={newRoomTitle}
-                onChange={(e) => setNewRoomTitle(e.target.value)}
-                placeholder="Titre du salon"
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
-              />
-
-              <textarea
-                value={newRoomDescription}
-                onChange={(e) => setNewRoomDescription(e.target.value)}
-                placeholder="Description"
-                className="min-h-[110px] w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-rose-400/35"
-              />
-
-              <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
-                <input
-                  type="checkbox"
-                  checked={newRoomLive}
-                  onChange={(e) => setNewRoomLive(e.target.checked)}
-                />
-                Salon en live à la création
-              </label>
-
-              <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
-                <input
-                  type="checkbox"
-                  checked={newRoomVip}
-                  onChange={(e) => setNewRoomVip(e.target.checked)}
-                />
-                Salon VIP
-              </label>
-
-              <button
-                type="button"
-                disabled={busy === "create-room"}
-                onClick={createRoom}
-                className="w-full rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-3 text-sm font-black text-black transition hover:opacity-95 disabled:opacity-60"
-              >
-                {busy === "create-room" ? "Création..." : "Créer le salon"}
-              </button>
-            </div>
-          </div>
-
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-            <h2 className="text-2xl font-black text-white">Logs admin</h2>
-            <p className="mt-1 text-sm text-white/58">
-              Historique récent des actions sensibles.
-            </p>
-
-            <div className="mt-5 max-h-[380px] space-y-3 overflow-auto pr-1">
-              {logs.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/55">
-                  Aucun log pour l’instant.
-                </div>
-              ) : (
-                logs.map((log) => (
-                  <div
-                    key={log.id}
-                    className="rounded-2xl border border-white/10 bg-white/5 p-4"
-                  >
-                    <p className="text-sm font-bold text-white">{log.action}</p>
-                    <p className="mt-1 text-xs text-white/45">
-                      {log.target_type || "—"} • {log.target_id || "—"}
-                    </p>
-                    <p className="mt-2 text-sm text-white/60">{log.details || "—"}</p>
-                    <p className="mt-2 text-xs text-white/35">{formatDate(log.created_at)}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </aside>
-      </div>
+  return (
+    <div
+      className={cx(
+        "rounded-[20px] border px-4 py-4 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.22)]",
+        flash.tone === "success"
+          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+          : "border-red-400/20 bg-red-500/10 text-red-100"
+      )}
+    >
+      {flash.text}
     </div>
   );
 }
@@ -933,14 +291,537 @@ export default function AdminPage() {
 function StatCard({
   label,
   value,
+  icon,
+  tone = "default",
+  sub,
 }: {
   label: string;
-  value: string | number;
+  value: number | string;
+  icon: ReactNode;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+  sub?: string;
 }) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-500/14 bg-red-950/10"
+      : tone === "green"
+      ? "border-emerald-500/14 bg-emerald-950/10"
+      : tone === "gold"
+      ? "border-amber-500/14 bg-amber-950/10"
+      : tone === "violet"
+      ? "border-fuchsia-500/14 bg-fuchsia-950/10"
+      : "border-white/10 bg-black/20";
+
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-      <p className="text-xs uppercase tracking-[0.25em] text-white/40">{label}</p>
-      <p className="mt-3 text-3xl font-black text-white">{value}</p>
+    <div
+      className={cx(
+        "rounded-[22px] border p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]",
+        toneClass
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.2em] text-white/34">
+          {label}
+        </div>
+        <div className="text-white/60">{icon}</div>
+      </div>
+      <div className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </div>
+      {sub ? <div className="mt-2 text-xs text-white/42">{sub}</div> : null}
+    </div>
+  );
+}
+
+function MenuCard({
+  title,
+  desc,
+  icon,
+  href,
+  tone = "default",
+  router,
+}: {
+  title: string;
+  desc: string;
+  icon: ReactNode;
+  href: string;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+  router: ReturnType<typeof useRouter>;
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-red-500/14 bg-red-950/10 hover:bg-red-900/16"
+      : tone === "green"
+      ? "border-emerald-500/14 bg-emerald-950/10 hover:bg-emerald-900/16"
+      : tone === "gold"
+      ? "border-amber-500/14 bg-amber-950/10 hover:bg-amber-900/16"
+      : tone === "violet"
+      ? "border-fuchsia-500/14 bg-fuchsia-950/10 hover:bg-fuchsia-900/16"
+      : "border-white/10 bg-black/20 hover:bg-black/30";
+
+  return (
+    <button
+      type="button"
+      onClick={() => router.push(href)}
+      className={cx(
+        "rounded-[24px] border p-5 text-left shadow-[0_14px_40px_rgba(0,0,0,0.25)] transition duration-300 hover:-translate-y-1",
+        toneClass
+      )}
+    >
+      <div className="mb-4 flex items-center gap-3">
+        <div className="grid h-11 w-11 place-items-center rounded-[16px] border border-white/10 bg-white/[0.04] text-white/75">
+          {icon}
+        </div>
+        <div className="text-sm font-black uppercase tracking-[0.16em] text-white">
+          {title}
+        </div>
+      </div>
+
+      <div className="text-sm leading-6 text-white/58">{desc}</div>
+    </button>
+  );
+}
+
+export default function AdminPage() {
+  const router = useRouter();
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
+  const [flash, setFlash] = useState<FlashState>(null);
+  const [overview, setOverview] = useState<OverviewState>({
+    members: 0,
+    vip: 0,
+    reports: 0,
+    liveRooms: 0,
+    desirSessions: 0,
+    payments: 0,
+    revenue: 0,
+    contentBlocks: 0,
+    settings: 0,
+    verifications: 0,
+  });
+
+  const vipRate = useMemo(() => {
+    if (!overview.members) return 0;
+    return Math.round((overview.vip / overview.members) * 100);
+  }, [overview.members, overview.vip]);
+
+  const loadPage = useCallback(
+    async (firstLoad = false) => {
+      try {
+        if (firstLoad) setLoading(true);
+        else setRefreshing(true);
+
+        setFlash(null);
+
+        const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+          router.replace("/enter");
+          return;
+        }
+
+        const nextAdmin = await loadAdminProfileCompat(user.id);
+
+        if (!nextAdmin || !nextAdmin.isAdmin) {
+          router.replace("/dashboard");
+          return;
+        }
+
+        const [
+          members,
+          vip,
+          reports,
+          liveRooms,
+          desirSessions,
+          revenueInfo,
+          contentBlocks,
+          settings,
+          verifications,
+        ] = await Promise.all([
+          safeCount("profiles").catch(() => 0),
+          countVipProfiles(),
+          countAllReports(),
+          countLiveRooms(),
+          safeCount("desir_sessions", (q) => q.eq("status", "active")).catch(
+            () => 0
+          ),
+          revenueCompat(),
+          countContentCompat(),
+          countSettingsCompat(),
+          countVerificationCompat(),
+        ]);
+
+        setAdminProfile(nextAdmin);
+        setOverview({
+          members,
+          vip,
+          reports,
+          liveRooms,
+          desirSessions,
+          payments: revenueInfo.count,
+          revenue: revenueInfo.total,
+          contentBlocks,
+          settings,
+          verifications,
+        });
+      } catch (e: any) {
+        setFlash({
+          tone: "error",
+          text: e?.message || "Impossible de charger le hub admin.",
+        });
+        console.error("Admin page error:", e);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [router]
+  );
+
+  useEffect(() => {
+    void loadPage(true);
+  }, [loadPage]);
+
+  if (loading) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(120,40,200,0.08),transparent_24%),linear-gradient(180deg,#040405_0%,#07070a_100%)]" />
+        <div className="relative w-full max-w-md rounded-[32px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
+          </div>
+
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            Admin Hub
+          </div>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Chargement...
+          </h1>
+        </div>
+      </div>
+    );
+  }
+
+  if (!adminProfile) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="w-full max-w-md rounded-[28px] border border-red-500/12 bg-[#0d0d12] p-8 text-center">
+          <div className="text-lg font-black text-white">Accès admin refusé</div>
+          <div className="mt-2 text-sm text-white/56">
+            Recharge la page ou reconnecte-toi.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+      <div className="relative min-h-screen lg:pl-[290px]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+          <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+          <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
+        </div>
+
+        <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+          <div className="mb-3 flex items-center justify-between gap-3 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <Menu className="h-4 w-4" />
+              Menu
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void loadPage(false)}
+              className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+              Refresh
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-[30px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)]">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
+
+              <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                    Centre de contrôle
+                  </div>
+
+                  <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-white md:text-5xl">
+                    Admin
+                  </h1>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                    <span className="font-black text-white">{adminProfile.pseudo}</span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      Membres <span className="font-black text-white">{overview.members}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      VIP <span className="font-black text-white">{vipRate}%</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      Revenu{" "}
+                      <span className="font-black text-white">
+                        {moneyFormat(overview.revenue)}
+                      </span>
+                    </span>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Tag tone="red">
+                      <Shield className="h-3.5 w-3.5" />
+                      contrôle total
+                    </Tag>
+                    <Tag tone="violet">
+                      <LayoutDashboard className="h-3.5 w-3.5" />
+                      hub admin
+                    </Tag>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void loadPage(false)}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-red-500/12 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-red-900/16"
+                  >
+                    <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+                    Actualiser
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard")}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-white/[0.07]"
+                  >
+                    <LayoutDashboard className="h-4 w-4" />
+                    Retour site
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <FlashBanner flash={flash} />
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <StatCard
+                label="Membres"
+                value={overview.members}
+                icon={<Users className="h-4 w-4" />}
+              />
+              <StatCard
+                label="VIP"
+                value={overview.vip}
+                icon={<Sparkles className="h-4 w-4" />}
+                tone="gold"
+                sub={`${vipRate}% du total`}
+              />
+              <StatCard
+                label="Reports"
+                value={overview.reports}
+                icon={<AlertTriangle className="h-4 w-4" />}
+                tone="red"
+              />
+              <StatCard
+                label="Salons live"
+                value={overview.liveRooms}
+                icon={<Video className="h-4 w-4" />}
+                tone="violet"
+              />
+              <StatCard
+                label="Sessions Désir"
+                value={overview.desirSessions}
+                icon={<Flame className="h-4 w-4" />}
+                tone="red"
+              />
+              <StatCard
+                label="Paiements"
+                value={overview.payments}
+                icon={<CreditCard className="h-4 w-4" />}
+                tone="gold"
+              />
+              <StatCard
+                label="Revenu"
+                value={moneyFormat(overview.revenue)}
+                icon={<Wallet className="h-4 w-4" />}
+                tone="gold"
+              />
+              <StatCard
+                label="Contenu"
+                value={overview.contentBlocks}
+                icon={<FileText className="h-4 w-4" />}
+                tone="green"
+              />
+              <StatCard
+                label="Settings"
+                value={overview.settings}
+                icon={<Settings2 className="h-4 w-4" />}
+                tone="violet"
+              />
+              <StatCard
+                label="Vérifications"
+                value={overview.verifications}
+                icon={<BadgeCheck className="h-4 w-4" />}
+                tone="green"
+              />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-4">
+              <MenuCard
+                title="Membres"
+                desc="Lister, retrouver et contrôler les comptes."
+                icon={<Users className="h-5 w-5" />}
+                href="/admin/members"
+                tone="default"
+                router={router}
+              />
+              <MenuCard
+                title="Modération"
+                desc="Reports, sanctions, suivi des incidents."
+                icon={<Shield className="h-5 w-5" />}
+                href="/admin/moderation"
+                tone="red"
+                router={router}
+              />
+              <MenuCard
+                title="Sécurité"
+                desc="Bans, risques, incidents et contrôle sensible."
+                icon={<Wrench className="h-5 w-5" />}
+                href="/admin/security"
+                tone="red"
+                router={router}
+              />
+              <MenuCard
+                title="Rapports"
+                desc="Vue business globale, chiffres et synthèse."
+                icon={<Activity className="h-5 w-5" />}
+                href="/admin/reports"
+                tone="gold"
+                router={router}
+              />
+
+              <MenuCard
+                title="Paiements"
+                desc="Transactions, statuts, remboursements, revenus."
+                icon={<CreditCard className="h-5 w-5" />}
+                href="/admin/payments"
+                tone="gold"
+                router={router}
+              />
+              <MenuCard
+                title="Abonnements"
+                desc="Plans VIP, prix, durée, activation."
+                icon={<Sparkles className="h-5 w-5" />}
+                href="/admin/subscriptions"
+                tone="violet"
+                router={router}
+              />
+              <MenuCard
+                title="Contenu"
+                desc="Blocs éditoriaux, homepage, textes du site."
+                icon={<FileText className="h-5 w-5" />}
+                href="/admin/content"
+                tone="green"
+                router={router}
+              />
+              <MenuCard
+                title="Annonces"
+                desc="Messages système, bannières, communication."
+                icon={<Bell className="h-5 w-5" />}
+                href="/admin/announcements"
+                tone="violet"
+                router={router}
+              />
+
+              <MenuCard
+                title="Live"
+                desc="Monitoring salons live et trafic instantané."
+                icon={<Video className="h-5 w-5" />}
+                href="/admin/live"
+                tone="red"
+                router={router}
+              />
+              <MenuCard
+                title="Désir"
+                desc="Cam-to-cam aléatoire, sessions et matching."
+                icon={<Flame className="h-5 w-5" />}
+                href="/admin/desir"
+                tone="red"
+                router={router}
+              />
+              <MenuCard
+                title="Vérification"
+                desc="Demandes pending, validation et contrôle."
+                icon={<BadgeCheck className="h-5 w-5" />}
+                href="/admin/verification"
+                tone="green"
+                router={router}
+              />
+              <MenuCard
+                title="Audit"
+                desc="Logs admin, historique et traçabilité."
+                icon={<FileSearch className="h-5 w-5" />}
+                href="/admin/audit"
+                tone="default"
+                router={router}
+              />
+
+              <MenuCard
+                title="Settings"
+                desc="Configuration globale du site et options."
+                icon={<Settings2 className="h-5 w-5" />}
+                href="/admin/settings"
+                tone="violet"
+                router={router}
+              />
+              <MenuCard
+                title="System"
+                desc="Lecture santé, tables, maintenance."
+                icon={<Wrench className="h-5 w-5" />}
+                href="/admin/system"
+                tone="default"
+                router={router}
+              />
+              <MenuCard
+                title="Salons"
+                desc="Gestion rooms, live, présence et salons."
+                icon={<Video className="h-5 w-5" />}
+                href="/admin/salons"
+                tone="violet"
+                router={router}
+              />
+              <MenuCard
+                title="Retour dashboard"
+                desc="Revenir au dashboard utilisateur normal."
+                icon={<LayoutDashboard className="h-5 w-5" />}
+                href="/dashboard"
+                tone="default"
+                router={router}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

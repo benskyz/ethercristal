@@ -1,144 +1,100 @@
 "use client";
 
-import React, { useMemo } from "react";
-import { getShopItemByKey, ShopItem } from "@/lib/shop";
+import { Crown, Shield, Sparkles } from "lucide-react";
 
-export type DisplayProfile = {
-  pseudo?: string | null;
-
-  // role / admin
-  is_admin?: boolean | null;
-  role?: string | null;
-
-  // active styling keys
-  active_name_fx_key?: string | null;
-  active_badge_key?: string | null;
-  active_title_key?: string | null;
-
-  // master ether fields
-  master_title?: string | null;
-  master_title_style?: string | null;
-
-  // optional vip fields (used only for fallback display if you want)
-  vip_expires_at?: string | null;
+type Props = {
+  pseudo: string;
+  isVip?: boolean | null;
+  isAdmin?: boolean | null;
+  masterTitle?: string | null;
+  masterTitleStyle?: string | null;
+  activeNameFxKey?: string | null;
+  activeBadgeKey?: string | null;
+  activeTitleKey?: string | null;
+  className?: string;
 };
 
-function cx(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function safeText(v?: string | null, fallback = "") {
-  const s = (v ?? "").trim();
-  return s.length ? s : fallback;
+function getNameEffectClass(effectKey?: string | null) {
+  const key = (effectKey || "").toLowerCase();
+
+  if (!key) return "text-white";
+  if (key.includes("crystal")) return "bg-gradient-to-r from-white via-cyan-200 to-white bg-clip-text text-transparent";
+  if (key.includes("void")) return "bg-gradient-to-r from-fuchsia-200 via-violet-400 to-fuchsia-200 bg-clip-text text-transparent";
+  if (key.includes("ember")) return "bg-gradient-to-r from-orange-300 via-red-400 to-orange-300 bg-clip-text text-transparent";
+
+  return "bg-gradient-to-r from-white via-fuchsia-200 to-white bg-clip-text text-transparent";
 }
 
-function isAdmin(p?: DisplayProfile | null) {
-  return Boolean(p?.is_admin || p?.role === "admin");
-}
+function getTitleTone(titleStyle?: string | null) {
+  const value = (titleStyle || "").toLowerCase();
 
-function iconFromMeta(item?: ShopItem | null) {
-  const icon = item?.meta?.icon;
-  if (!icon) return null;
-  return String(icon);
-}
+  if (value.includes("gold")) return "border-amber-400/18 bg-amber-500/10 text-amber-100";
+  if (value.includes("void")) return "border-fuchsia-400/18 bg-fuchsia-500/10 text-fuchsia-100";
+  if (value.includes("crystal")) return "border-cyan-300/18 bg-cyan-500/10 text-cyan-100";
 
-function BadgePill({ className, text }: { className: string; text: string }) {
-  return (
-    <span className={cx(className, "shrink-0")}>
-      {text}
-    </span>
-  );
+  return "border-white/10 bg-white/[0.04] text-white/70";
 }
 
 export default function ProfileName({
-  profile,
-  size = "md",
-  showTitle = true,
-  showBadge = true,
+  pseudo,
+  isVip,
+  isAdmin,
+  masterTitle,
+  masterTitleStyle,
+  activeNameFxKey,
+  activeBadgeKey,
+  activeTitleKey,
   className,
-}: {
-  profile: DisplayProfile;
-  size?: "sm" | "md" | "lg";
-  showTitle?: boolean;
-  showBadge?: boolean;
-  className?: string;
-}) {
-  const pseudo = safeText(profile?.pseudo, "Membre");
-
-  const admin = isAdmin(profile);
-
-  const nameFxItem = useMemo(() => {
-    const key = profile?.active_name_fx_key ?? null;
-    return key ? getShopItemByKey(key) : null;
-  }, [profile?.active_name_fx_key]);
-
-  const badgeItem = useMemo(() => {
-    const key = profile?.active_badge_key ?? null;
-    return key ? getShopItemByKey(key) : null;
-  }, [profile?.active_badge_key]);
-
-  const titleItem = useMemo(() => {
-    const key = profile?.active_title_key ?? null;
-    return key ? getShopItemByKey(key) : null;
-  }, [profile?.active_title_key]);
-
-  // Master Ether overrides title if present and admin
-  const masterTitle = admin ? safeText(profile?.master_title, "") : "";
-  const masterStyle = admin ? safeText(profile?.master_title_style, "") : "";
-
-  const titleText =
-    masterTitle ||
-    safeText(titleItem?.titleText, "") ||
-    safeText(titleItem?.name, "");
-
-  const titleClass =
-    masterTitle
-      ? (masterStyle || "text-violet-200")
-      : "text-white/55";
-
-  const badgeIcon = iconFromMeta(badgeItem);
-  const badgeText =
-    badgeIcon ? `${badgeIcon} ${badgeItem?.name ?? ""}`.trim() : (badgeItem?.name ?? "");
-
-  const badgeClass =
-    badgeItem?.badgeClass ||
-    "inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-2 py-1 text-[11px] font-black text-white/75";
-
-  const sizes = {
-    sm: { name: "text-base", title: "text-[10px]", wrapGap: "gap-2" },
-    md: { name: "text-xl sm:text-2xl", title: "text-[11px]", wrapGap: "gap-2" },
-    lg: { name: "text-2xl sm:text-3xl", title: "text-xs", wrapGap: "gap-3" },
-  }[size];
-
-  const nameClass =
-    nameFxItem?.previewClass ||
-    "text-white";
-
+}: Props) {
   return (
     <div className={cx("min-w-0", className)}>
-      <div className={cx("flex items-center flex-wrap", sizes.wrapGap)}>
-        <div className="min-w-0">
-          <div className={cx("truncate font-black tracking-tight", sizes.name, nameClass)}>
-            {pseudo}
-          </div>
-        </div>
+      <div
+        className={cx(
+          "truncate text-xl font-black tracking-[-0.02em]",
+          getNameEffectClass(activeNameFxKey)
+        )}
+      >
+        {pseudo || "Membre Ether"}
+      </div>
 
-        {showBadge && badgeItem ? (
-          <BadgePill className={badgeClass} text={badgeText} />
+      <div className="mt-2 flex flex-wrap gap-2">
+        {isAdmin ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-400/18 bg-red-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-red-100">
+            <Shield className="h-3.5 w-3.5" />
+            admin
+          </span>
         ) : null}
 
-        {admin ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[11px] font-black text-violet-200">
-            🜁 Ether
+        {isVip ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/18 bg-amber-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-amber-100">
+            <Crown className="h-3.5 w-3.5" />
+            vip
+          </span>
+        ) : null}
+
+        {activeBadgeKey ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-400/18 bg-fuchsia-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-fuchsia-100">
+            <Sparkles className="h-3.5 w-3.5" />
+            {activeBadgeKey}
+          </span>
+        ) : null}
+
+        {masterTitle ? (
+          <span
+            className={cx(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em]",
+              getTitleTone(masterTitleStyle)
+            )}
+          >
+            {activeTitleKey ? <Sparkles className="h-3.5 w-3.5" /> : null}
+            {masterTitle}
           </span>
         ) : null}
       </div>
-
-      {showTitle && titleText ? (
-        <div className={cx("mt-1 uppercase tracking-[0.22em] font-black", sizes.title, titleClass)}>
-          {titleText}
-        </div>
-      ) : null}
     </div>
   );
 }

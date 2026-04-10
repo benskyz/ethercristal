@@ -4,276 +4,230 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
-  LayoutDashboard,
-  Users,
-  ShoppingBag,
-  MessageCircle,
-  User,
   Crown,
+  Flame,
+  LayoutDashboard,
+  LogOut,
+  MenuSquare,
+  MessageSquare,
   Settings,
   Shield,
-  LogOut,
+  ShoppingBag,
   Sparkles,
-  RefreshCw,
+  Users,
+  Wand2,
+  X,
 } from "lucide-react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import ProfileName, { DisplayProfile } from "@/components/ProfileName";
+import { getProfileByUserId, profileDisplayName, type ProfileRow } from "@/lib/profileCompat";
 
-const supabase = requireSupabaseBrowserClient();
-
-type ProfileRow = DisplayProfile & {
-  id: string;
-  credits?: number | null;
-  vip_expires_at?: string | null;
+type SidebarProps = {
+  open?: boolean;
+  onClose?: () => void;
 };
 
-function cx(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  adminOnly?: boolean;
+};
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function isVipActive(vip_expires_at?: string | null) {
-  if (!vip_expires_at) return false;
-  const d = new Date(vip_expires_at);
-  if (Number.isNaN(d.getTime())) return false;
-  return d > new Date();
-}
-
-function formatVip(vip_expires_at?: string | null) {
-  if (!vip_expires_at) return "Non VIP";
-  const d = new Date(vip_expires_at);
-  if (Number.isNaN(d.getTime())) return "Non VIP";
-  if (d <= new Date()) return "VIP expiré";
-  return `VIP → ${d.toLocaleDateString("fr-CA")}`;
-}
-
-export default function Sidebar({
-  variant = "desktop",
-}: {
-  variant?: "desktop" | "drawer";
-}) {
-  const router = useRouter();
+export default function Sidebar({ open = false, onClose }: SidebarProps) {
   const pathname = usePathname();
-
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
 
   const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  const credits = profile?.credits ?? 0;
-  const vipOk = isVipActive(profile?.vip_expires_at);
-  const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
-
-  const NAV = useMemo(() => {
-    const items = [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/salons", label: "Salons", icon: Users },
-      { href: "/desir", label: "Désir Intense", icon: Sparkles },
-      { href: "/boutique", label: "Boutique", icon: ShoppingBag },
-      { href: "/messages", label: "Messages", icon: MessageCircle },
-      { href: "/profile", label: "Profil", icon: User },
-      { href: "/vip", label: "VIP", icon: Crown },
-      { href: "/options", label: "Options", icon: Settings },
-    ];
-
-    if (isAdmin) items.unshift({ href: "/admin", label: "Admin", icon: Shield });
-    return items;
-  }, [isAdmin]);
-
-  async function loadProfile(opts?: { silent?: boolean }) {
-    const silent = Boolean(opts?.silent);
-
-    if (!silent) {
-      setLoading(true);
-    }
-    setError("");
-
-    const {
-      data: { user },
-      error: authErr,
-    } = await supabase.auth.getUser();
-
-    if (authErr || !user) {
-      router.push("/enter");
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select(
-        "id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
-      )
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (error) {
-      setError(error.message);
-      setProfile(null);
-    } else {
-      setProfile((data as ProfileRow) ?? null);
-    }
-
-    setLoading(false);
-  }
-
-  async function refresh() {
-    setRefreshing(true);
-    await loadProfile({ silent: true });
-    setRefreshing(false);
-  }
-
-  // initial load
   useEffect(() => {
-    loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let mounted = true;
+
+    async function loadSidebar() {
+      try {
+        const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!mounted) return;
+
+        if (!user) {
+          setProfile(null);
+          setLoading(false);
+          return;
+        }
+
+        const row = await getProfileByUserId(user.id);
+
+        if (!mounted) return;
+        setProfile(row);
+      } catch {
+        if (mounted) {
+          setProfile(null);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadSidebar();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  // reload small (silent) on route change so UI stays up-to-date without realtime headaches
-  useEffect(() => {
-    // if sidebar already has profile, do silent refresh on nav
-    if (!profile) return;
-    loadProfile({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+  const navItems = useMemo<NavItem[]>(
+    () => [
+      { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
+      { href: "/desir", label: "Désir", icon: <Flame className="h-4 w-4" /> },
+      { href: "/salons", label: "Salons", icon: <Users className="h-4 w-4" /> },
+      { href: "/messages", label: "Messages", icon: <MessageSquare className="h-4 w-4" /> },
+      { href: "/boutique", label: "Boutique", icon: <ShoppingBag className="h-4 w-4" /> },
+      { href: "/inventaire", label: "Inventaire", icon: <Wand2 className="h-4 w-4" /> },
+      { href: "/vip", label: "VIP", icon: <Crown className="h-4 w-4" /> },
+      { href: "/options", label: "Options", icon: <Settings className="h-4 w-4" /> },
+      { href: "/admin", label: "Admin", icon: <Shield className="h-4 w-4" />, adminOnly: true },
+    ],
+    []
+  );
 
-  async function signOut() {
-    await supabase.auth.signOut();
-    router.push("/enter");
+  async function handleLogout() {
+    try {
+      const supabase = requireSupabaseBrowserClient();
+      await supabase.auth.signOut();
+    } finally {
+      router.replace("/enter");
+    }
   }
 
-  const shell =
-    variant === "desktop"
-      ? "sticky top-0 h-screen w-[320px] shrink-0 border-r border-white/10 bg-black/40 backdrop-blur-2xl"
-      : "w-full border-b border-white/10 bg-black/40 backdrop-blur-2xl";
+  const visibleItems = navItems.filter((item) => !item.adminOnly || profile?.is_admin);
 
   return (
-    <aside className={shell}>
-      <div className={cx("flex h-full flex-col", variant === "desktop" ? "p-5" : "p-4")}>
-        {/* Brand */}
-        <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-xs uppercase tracking-[0.28em] text-white/45">
-                EtherCristal
+    <>
+      <div
+        className={cx(
+          "fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition lg:hidden",
+          open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        )}
+        onClick={onClose}
+      />
+
+      <aside
+        className={cx(
+          "fixed left-0 top-0 z-50 h-screen w-[290px] border-r border-red-500/12 bg-[#09090d]/96 p-4 text-white shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-transform duration-300 lg:translate-x-0",
+          open ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        <div className="flex h-full flex-col">
+          <div className="mb-4 flex items-center justify-between gap-3 lg:justify-start">
+            <div className="flex items-center gap-3">
+              <div className="grid h-12 w-12 place-items-center rounded-[18px] border border-red-500/12 bg-gradient-to-br from-red-700/20 via-black to-fuchsia-700/10">
+                <Sparkles className="h-5 w-5 text-red-100" />
               </div>
-              <div className="mt-1 text-2xl font-black text-white">NCQ LIVE</div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.24em] text-red-100/34">
+                  EtherCristal
+                </div>
+                <div className="text-lg font-black text-white">Navigation</div>
+              </div>
             </div>
 
             <button
-              onClick={refresh}
-              disabled={refreshing}
-              className="rounded-2xl border border-white/10 bg-white/5 p-2 hover:bg-white/10 disabled:opacity-60"
-              title="Actualiser"
+              type="button"
+              onClick={onClose}
+              className="grid h-10 w-10 place-items-center rounded-[14px] border border-white/10 bg-white/[0.04] text-white/70 lg:hidden"
             >
-              <RefreshCw className={cx("h-4 w-4 text-white/80", refreshing && "animate-spin")} />
+              <X className="h-4 w-4" />
             </button>
           </div>
 
-          {/* Profile card */}
-          <div className="mt-4 rounded-[24px] border border-white/10 bg-black/30 p-4">
+          <div className="mb-4 rounded-[24px] border border-red-500/12 bg-black/20 p-4">
             {loading ? (
-              <div className="space-y-2">
-                <div className="h-4 w-2/3 rounded bg-white/10 animate-pulse" />
-                <div className="h-3 w-1/2 rounded bg-white/10 animate-pulse" />
-                <div className="mt-3 h-9 w-full rounded bg-white/10 animate-pulse" />
-              </div>
-            ) : profile ? (
-              <div className="space-y-3">
-                <ProfileName profile={profile} size="md" showTitle showBadge />
-
-                <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white/70">
-                    {credits} crédits
+              <div className="text-sm text-white/45">Chargement du profil...</div>
+            ) : (
+              <>
+                <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                  Profil
+                </div>
+                <div className="mt-2 text-lg font-black text-white">
+                  {profileDisplayName(profile)}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-white/75">
+                    crédits {profile?.credits ?? 0}
                   </span>
-
-                  <span
-                    className={cx(
-                      "rounded-full border px-3 py-1 text-xs font-black",
-                      vipOk
-                        ? "border-amber-400/20 bg-amber-500/10 text-amber-200"
-                        : "border-white/10 bg-white/10 text-white/55"
-                    )}
-                  >
-                    {formatVip(profile.vip_expires_at)}
-                  </span>
-
-                  {isAdmin ? (
-                    <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs font-black text-violet-200">
-                      Maître Ether
+                  {profile?.is_vip ? (
+                    <span className="rounded-full border border-amber-400/18 bg-amber-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-amber-100">
+                      vip
+                    </span>
+                  ) : null}
+                  {profile?.is_admin ? (
+                    <span className="rounded-full border border-red-400/18 bg-red-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-red-100">
+                      admin
                     </span>
                   ) : null}
                 </div>
-
-                <button
-                  onClick={() => router.push("/boutique")}
-                  className="w-full rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2.5 text-sm font-black text-black hover:opacity-95"
-                >
-                  Améliorer mon style
-                </button>
-              </div>
-            ) : (
-              <div className="text-sm text-white/60">Profil introuvable.</div>
+              </>
             )}
-
-            {error ? (
-              <div className="mt-3 rounded-2xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-200">
-                {error}
-              </div>
-            ) : null}
           </div>
-        </div>
 
-        {/* Nav */}
-        <nav className={cx("mt-5 space-y-2", variant === "desktop" ? "flex-1" : "")}>
-          {NAV.map((item) => {
-            const active =
-              pathname === item.href || pathname.startsWith(item.href + "/");
-            const Icon = item.icon;
+          <nav className="flex-1 space-y-2 overflow-y-auto">
+            {visibleItems.map((item) => {
+              const active =
+                pathname === item.href ||
+                (item.href !== "/dashboard" && pathname.startsWith(item.href));
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cx(
-                  "group flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-black transition",
-                  active
-                    ? "border-white/10 bg-white/12 text-white"
-                    : "border-white/10 bg-white/[0.04] text-white/75 hover:bg-white/[0.07]"
-                )}
-              >
-                <span
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onClose}
                   className={cx(
-                    "grid h-9 w-9 place-items-center rounded-xl border transition",
+                    "flex items-center gap-3 rounded-[18px] border px-4 py-4 text-sm font-black uppercase tracking-[0.14em] transition",
                     active
-                      ? "border-white/10 bg-white/10"
-                      : "border-white/10 bg-white/5 group-hover:bg-white/10"
+                      ? "border-red-400/18 bg-red-500/12 text-white"
+                      : "border-white/8 bg-white/[0.03] text-white/62 hover:bg-white/[0.06] hover:text-white"
                   )}
                 >
-                  <Icon className="h-4 w-4" />
-                </span>
-                <span className="truncate">{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
+                  {item.icon}
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
 
-        {/* Footer */}
-        <div className="mt-4">
-          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mt-4 space-y-2">
             <button
-              onClick={signOut}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm font-black text-red-200 hover:bg-red-500/15"
+              type="button"
+              onClick={() => {
+                onClose?.();
+                router.push("/dashboard");
+              }}
+              className="flex w-full items-center gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-white/70 transition hover:bg-white/[0.06] hover:text-white"
+            >
+              <MenuSquare className="h-4 w-4" />
+              Vue principale
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex w-full items-center gap-3 rounded-[18px] border border-red-400/18 bg-red-500/10 px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-red-100 transition hover:bg-red-500/16"
             >
               <LogOut className="h-4 w-4" />
               Déconnexion
             </button>
-
-            <div className="mt-3 text-center text-[11px] text-white/40">
-              EtherCristal • privé • premium
-            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }

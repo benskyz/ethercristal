@@ -1,51 +1,33 @@
-import { ProfileRow } from "./shop-types";
-import { getThemeLabel } from "./shop-utils";
+"use client";
 
 type Props = {
-  etherBalance: number;
-  ownedCount: number;
-  equippedCount: number;
-  profile: ProfileRow | null;
+  pseudo: string;
+  credits: number;
+  isVip: boolean;
 };
 
-export default function ShopHeader({
-  etherBalance,
-  ownedCount,
-  equippedCount,
-  profile,
-}: Props) {
+export default function ShopHeader({ pseudo, credits, isVip }: Props) {
   return (
-    <header className="ec-header">
-      <div>
-        <div className="ec-kicker">Boutique finale</div>
-        <h1 className="ec-title">EtherCristal Shop</h1>
-        <p className="ec-subtitle">
-          Achète, équipe et connecte tes effets premium à ton profil, à DésirIntense,
-          aux salons et aux salles webcam.
-        </p>
+    <div className="rounded-[24px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
+      <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+        boutique
       </div>
 
-      <div className="ec-sidecards">
-        <div className="ec-sidecard">
-          <span className="ec-sidecard-label">Éther</span>
-          <strong>{etherBalance} Ξ</strong>
-        </div>
-
-        <div className="ec-sidecard">
-          <span className="ec-sidecard-label">Possédés</span>
-          <strong>{ownedCount}</strong>
-        </div>
-
-        <div className="ec-sidecard">
-          <span className="ec-sidecard-label">Équipés</span>
-          <strong>{equippedCount}</strong>
-        </div>
-
-        <div className="ec-sidecard">
-          <span className="ec-sidecard-label">Thème</span>
-          <strong>{getThemeLabel(profile?.theme_mode)}</strong>
-        </div>
+      <div className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">
+        {pseudo}
       </div>
-    </header>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className="rounded-full border border-amber-400/18 bg-amber-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-amber-100">
+          {credits} Ξ
+        </span>
+
+        {isVip ? (
+          <span className="rounded-full border border-fuchsia-400/18 bg-fuchsia-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-fuchsia-100">
+            vip
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }

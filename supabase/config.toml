@@ -1,0 +1,5 @@
+[functions.create-payment-session]
+verify_jwt = true
+
+[functions.payment-webhook]
+verify_jwt = false

@@ -1,62 +1,35 @@
-export type ShopCategory = "vip" | "effect" | "theme" | "bundle";
-
-export type ShopScope = "profile" | "desir" | "salons" | "rooms" | "global";
-
-export type ShopRarity = "common" | "rare" | "epic" | "legendary";
+export type ShopProfile = {
+  id: string;
+  pseudo: string;
+  credits: number;
+  is_vip: boolean;
+  is_admin: boolean;
+  master_title: string;
+  active_name_fx_key: string | null;
+  active_badge_key: string | null;
+  active_title_key: string | null;
+};
 
 export type ShopItem = {
   id: string;
-  slug: string;
+  item_key: string;
   title: string;
   description: string;
-  price_ether?: number | null;
-  price_usd?: number | null;
-  category: ShopCategory;
-  badge?: string | null;
-  metadata?: {
-    scope?: ShopScope;
-    unique?: boolean;
-    target?: string;
-    rarity?: ShopRarity;
-    preview_variant?: string;
-    affects?: string[];
-  } | null;
+  price: number;
+  category: string;
+  rarity: string;
+  preview_style: string | null;
+  is_active: boolean;
+  metadata: Record<string, unknown>;
 };
 
-export type ProfileRow = {
+export type InventoryItem = {
   id: string;
-  username?: string | null;
-  bio?: string | null;
-  avatar_url?: string | null;
-  city?: string | null;
-  ether_balance?: number | null;
-  vip_level?: string | null;
-  theme_mode?: string | null;
-  is_verified?: boolean | null;
-  display_name_color?: string | null;
-  display_name_glow?: string | null;
-  display_name_gradient?: string | null;
+  user_id: string;
+  item_key: string;
+  item_type: string;
+  equipped: boolean;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
-
-export type InventoryRow = {
-  id: string;
-  item_slug?: string | null;
-  item_type?: string | null;
-  is_active?: boolean | null;
-  metadata?: any;
-  acquired_at?: string | null;
-};
-
-export type BuyRpcResponse = {
-  ok?: boolean;
-  error?: string;
-  item_slug?: string;
-  title?: string;
-  new_balance?: number;
-  purchase_id?: string;
-};
-
-export type FilterTab = "all" | "vip" | "effect" | "theme" | "bundle";
-export type ScopeFilter = "all" | ShopScope;
-export type OwnedFilter = "all" | "owned" | "not_owned" | "equipped";
-export type SortMode = "default" | "price_low" | "price_high" | "rarity";

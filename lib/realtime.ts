@@ -1,31 +1,24 @@
-import type { SupabaseClient, RealtimeChannel } from "@supabase/supabase-js";
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 
-const channelCache = new Map<string, RealtimeChannel>();
+type BuildChannel = (channel: RealtimeChannel) => void;
+
+function randomChannelSuffix() {
+  return Math.random().toString(36).slice(2, 10);
+}
 
 export function createSafeChannel(
   supabase: SupabaseClient,
   name: string
 ) {
-  if (!name) throw new Error("Channel name missing");
+  const channel = supabase.channel(`${name}-${randomChannelSuffix()}`);
 
-  if (channelCache.has(name)) {
-    return {
-      channel: channelCache.get(name)!,
-      cleanup: () => {},
-    };
-  }
-
-  const channel = supabase.channel(name);
-  channelCache.set(name, channel);
-
-  function cleanup() {
+  const cleanup = () => {
     try {
       supabase.removeChannel(channel);
-      channelCache.delete(name);
-    } catch (e) {
-      console.warn("Realtime cleanup error:", e);
+    } catch {
+      // ignore cleanup errors
     }
-  }
+  };
 
   return { channel, cleanup };
 }
@@ -33,10 +26,16 @@ export function createSafeChannel(
 export function safeSubscribe(
   supabase: SupabaseClient,
   name: string,
-  build: (channel: RealtimeChannel) => RealtimeChannel
+  build: BuildChannel
 ) {
   const { channel, cleanup } = createSafeChannel(supabase, name);
-  const built = build(channel);
-  built.subscribe();
+
+  // IMPORTANT:
+  // build() must only register .on(...) handlers
+  // and MUST NOT call subscribe() itself.
+  build(channel);
+
+  channel.subscribe();
+
   return cleanup;
 }

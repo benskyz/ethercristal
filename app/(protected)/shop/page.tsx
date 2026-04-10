@@ -1,1244 +1,1149 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import Sidebar from "@/components/Sidebar";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import {
+  AlertTriangle,
+  Crown,
+  Gem,
+  Lock,
+  Menu,
+  RefreshCw,
+  Search,
+  Shield,
+  ShoppingBag,
+  Sparkles,
+  Wand2,
+  Zap,
+} from "lucide-react";
 
-type ProfileRow = {
+type profile_row = {
   id: string;
-  username?: string | null;
-  vip_level?: string | null;
-  ether_balance?: number | null;
-  is_verified?: boolean | null;
-  avatar_url?: string | null;
-  display_name_color?: string | null;
-  display_name_glow?: string | null;
-  display_name_gradient?: string | null;
+  email: string | null;
+  pseudo: string;
+  avatar_url: string | null;
+  bio: string | null;
+  credits: number;
+  is_vip: boolean;
+  is_admin: boolean;
+  vip_expires_at: string | null;
+  role: string;
+  master_title: string;
+  master_title_style: string | null;
+  active_name_fx_key: string | null;
+  active_badge_key: string | null;
+  active_title_key: string | null;
+  gender: string | null;
+  is_verified: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
-type ShopItemRow = {
+type shop_item_row = {
   id: string;
-  slug: string;
-  title?: string | null;
-  description?: string | null;
-  badge?: string | null;
-  category?: string | null;
-  price_ether?: number | null;
-  price_usd?: number | null;
-  metadata?: Record<string, any> | null;
-  is_active?: boolean | null;
-  created_at?: string | null;
-};
-
-type InventoryRow = {
-  id: string;
-  user_id?: string | null;
-  item_slug?: string | null;
-  item_type?: string | null;
-  is_active?: boolean | null;
-  metadata?: Record<string, any> | null;
-  created_at?: string | null;
-};
-
-type ShopFilter = "all" | "effect" | "theme" | "bundle";
-
-type PremiumCard = {
-  id: string;
+  item_key: string;
   title: string;
-  subtitle: string;
-  accent: "gold" | "diamond";
-  text: string;
-  features: string[];
-  cta: string;
-  href: string;
+  description: string;
+  price: number;
+  category: string;
+  rarity: string;
+  preview_style: string | null;
+  is_active: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
-const FILTERS: ShopFilter[] = ["all", "effect", "theme", "bundle"];
-
-const FILTER_LABELS: Record<ShopFilter, string> = {
-  all: "Tous",
-  effect: "Effets",
-  theme: "Thèmes",
-  bundle: "Bundles",
+type inventory_item_row = {
+  id: string;
+  user_id: string;
+  item_key: string;
+  item_type: string;
+  equipped: boolean;
+  meta: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
-const PREMIUM_CARDS: PremiumCard[] = [
-  {
-    id: "vip",
-    title: "VIP Gold",
-    subtitle: "Accès premium chaud et luxueux",
-    accent: "gold",
-    text: "Débloque les espaces premium, améliore ta présence et entre dans un univers plus exclusif.",
-    features: [
-      "Accès aux espaces VIP",
-      "Profil mieux mis en avant",
-      "Badge premium visible",
-      "Expérience plus haut de gamme",
-    ],
-    cta: "Voir les offres VIP",
-    href: "/vip",
-  },
-  {
-    id: "vip-plus",
-    title: "VIP+ Diamond",
-    subtitle: "Bleu diamant, plus rare, plus précieux",
-    accent: "diamond",
-    text: "Le palier supérieur pour une image plus rare, plus nette et plus prestigieuse.",
-    features: [
-      "Tous les avantages VIP",
-      "Signature bleu diamant",
-      "Présence plus exclusive",
-      "Statut premium supérieur",
-    ],
-    cta: "Voir VIP+",
-    href: "/vip/vip-plus?duration=1m",
-  },
-];
+type flash_state =
+  | {
+      tone: "success" | "error";
+      text: string;
+    }
+  | null;
 
-function getProfileName(profile: ProfileRow | null) {
-  return String(profile?.username || "Membre");
+type owned_filter = "all" | "owned" | "not_owned" | "equipped";
+
+type inventory_view_row = {
+  inventory: inventory_item_row;
+  item: shop_item_row | null;
+  slot: string;
+};
+
+const profile_select = `
+  id,
+  email,
+  pseudo,
+  avatar_url,
+  bio,
+  credits,
+  is_vip,
+  is_admin,
+  vip_expires_at,
+  role,
+  master_title,
+  master_title_style,
+  active_name_fx_key,
+  active_badge_key,
+  active_title_key,
+  gender,
+  is_verified,
+  created_at,
+  updated_at
+`;
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-function getProfileNameStyle(profile: ProfileRow | null) {
-  if (!profile) return {};
-
-  if (profile.display_name_gradient) {
-    return {
-      background: profile.display_name_gradient,
-      WebkitBackgroundClip: "text",
-      backgroundClip: "text",
-      color: "transparent",
-      textShadow: profile.display_name_glow
-        ? `0 0 16px ${profile.display_name_glow}`
-        : "0 0 14px rgba(212,175,55,0.14)",
-    };
+function as_record(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
   }
 
-  return {
-    color: profile.display_name_color || "#fff6d6",
-    textShadow: profile.display_name_glow
-      ? `0 0 16px ${profile.display_name_glow}`
-      : "0 0 14px rgba(212,175,55,0.14)",
-  };
-}
-
-function normalizeLevel(value?: string | null) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function isVipLevel(value?: string | null) {
-  const v = normalizeLevel(value);
-  return v !== "" && v !== "free" && v !== "standard";
-}
-
-function normalizeCategory(raw?: string | null): Exclude<ShopFilter, "all"> {
-  const v = String(raw || "").trim().toLowerCase();
-
-  if (["theme", "themes"].includes(v)) return "theme";
-
-  if (["bundle", "bundles", "pack", "packs"].includes(v)) return "bundle";
-
-  if (
-    [
-      "effect",
-      "effects",
-      "effet",
-      "effets",
-      "fx",
-      "vip",
-      "vip_effect",
-      "vip-effects",
-    ].includes(v)
-  ) {
-    return "effect";
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {}
   }
 
-  return "effect";
+  return {};
 }
 
-function itemCategory(item: ShopItemRow): Exclude<ShopFilter, "all"> {
-  return normalizeCategory(item.category);
+function sanitize_text(value: string | null | undefined, fallback = "") {
+  const clean = (value || "").trim();
+  return clean || fallback;
 }
 
-function itemTitle(item: ShopItemRow) {
-  return String(item.title || item.slug || "Item");
+function normalize_pseudo(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 32);
 }
 
-function itemDescription(item: ShopItemRow) {
-  return String(item.description || "Effet premium EtherCristal.");
+function build_fallback_pseudo(email: string | null | undefined, user_id: string) {
+  const base = email?.split("@")[0]?.trim() || `membre_${user_id.slice(0, 8)}`;
+  return normalize_pseudo(base || "Membre Ether");
 }
 
-function itemBadge(item: ShopItemRow) {
-  return String(item.badge || item.category || "Premium");
+function vip_is_active(profile: profile_row | null) {
+  if (!profile) return false;
+  if (profile.is_admin) return true;
+  if (profile.is_vip) return true;
+
+  if (!profile.vip_expires_at) return false;
+
+  const expires = new Date(profile.vip_expires_at).getTime();
+  return Number.isFinite(expires) && expires > Date.now();
 }
 
-function isVipOnly(item: ShopItemRow) {
-  return Boolean(item.metadata?.vip_only);
+function item_cost_in_credits(item: shop_item_row) {
+  return Math.max(0, Math.ceil(Number(item.price || 0)));
 }
 
-function isUnique(item: ShopItemRow) {
-  return Boolean(item.metadata?.unique);
+function item_requires_vip(item: shop_item_row) {
+  const metadata = as_record(item.metadata);
+
+  return Boolean(
+    metadata.vip_required === true ||
+      metadata.vip_only === true ||
+      metadata.vipOnly === true
+  );
 }
 
-function visualTone(item: ShopItemRow) {
-  const slug = String(item.slug || "").toLowerCase();
-  const category = itemCategory(item);
+function infer_slot_from_item(item: shop_item_row | null, inventory?: inventory_item_row | null) {
+  const inventory_meta = as_record(inventory?.meta);
+  const item_meta = as_record(item?.metadata);
 
-  if (slug.includes("gold") || slug.includes("ether")) return "gold";
-  if (slug.includes("midnight") || slug.includes("dark")) return "dark";
-  if (slug.includes("cristal") || slug.includes("diamond")) return "diamond";
-  if (slug.includes("desir") || slug.includes("rose")) return "rose";
-  if (category === "bundle") return "vip";
+  const direct_slot =
+    sanitize_text(String(inventory_meta.slot ?? ""), "") ||
+    sanitize_text(String(item_meta.slot ?? ""), "");
+
+  if (direct_slot) return direct_slot.toLowerCase();
+
+  const source =
+    sanitize_text(item?.category, "") ||
+    sanitize_text(inventory?.item_type, "") ||
+    sanitize_text(item?.item_key, "") ||
+    sanitize_text(inventory?.item_key, "");
+
+  const lowered = source.toLowerCase();
+
+  if (lowered.includes("badge")) return "badge";
+  if (lowered.includes("title")) return "title";
+  if (lowered.includes("name")) return "name";
+
+  return lowered || "effect";
+}
+
+function slot_label(slot: string) {
+  if (slot === "name") return "name fx";
+  if (slot === "badge") return "badge";
+  if (slot === "title") return "title";
+  return slot || "effect";
+}
+
+function rarity_tone(rarity: string) {
+  const clean = rarity.toLowerCase();
+
+  if (clean === "legendary") return "red";
+  if (clean === "epic") return "violet";
+  if (clean === "rare") return "gold";
   return "default";
+}
+
+function price_label(item: shop_item_row) {
+  return `${item_cost_in_credits(item)} crédits`;
+}
+
+async function get_connected_user() {
+  const supabase = requireSupabaseBrowserClient();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error) throw error;
+  return user;
+}
+
+async function get_profile_record(user_id: string) {
+  const supabase = requireSupabaseBrowserClient();
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(profile_select)
+    .eq("id", user_id)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return (data as profile_row | null) ?? null;
+}
+
+async function ensure_profile_record(user_id: string, email?: string | null) {
+  const supabase = requireSupabaseBrowserClient();
+
+  const existing = await get_profile_record(user_id);
+  if (existing) return existing;
+
+  const { error: upsert_error } = await supabase.from("profiles").upsert(
+    {
+      id: user_id,
+      email: email ?? null,
+      pseudo: build_fallback_pseudo(email, user_id),
+      credits: 0,
+      is_vip: false,
+      is_admin: false,
+      role: "member",
+      master_title: "Aucun titre",
+    },
+    { onConflict: "id" }
+  );
+
+  if (upsert_error) throw upsert_error;
+
+  const created = await get_profile_record(user_id);
+
+  if (!created) {
+    throw new Error("Impossible de créer le profil utilisateur.");
+  }
+
+  return created;
+}
+
+async function list_active_shop_items() {
+  const supabase = requireSupabaseBrowserClient();
+
+  const { data, error } = await supabase
+    .from("shop_items")
+    .select("*")
+    .eq("is_active", true)
+    .order("price", { ascending: true });
+
+  if (error) throw error;
+
+  return ((data ?? []) as any[]).map(
+    (row): shop_item_row => ({
+      id: String(row.id),
+      item_key: sanitize_text(row.item_key),
+      title: sanitize_text(row.title, "Item"),
+      description: sanitize_text(row.description),
+      price: Number(row.price ?? 0),
+      category: sanitize_text(row.category, "effect"),
+      rarity: sanitize_text(row.rarity, "common"),
+      preview_style: row.preview_style ?? null,
+      is_active: Boolean(row.is_active),
+      metadata: as_record(row.metadata),
+      created_at: String(row.created_at ?? ""),
+      updated_at: String(row.updated_at ?? ""),
+    })
+  );
+}
+
+async function list_inventory_items(user_id: string) {
+  const supabase = requireSupabaseBrowserClient();
+
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("*")
+    .eq("user_id", user_id)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  return ((data ?? []) as any[]).map(
+    (row): inventory_item_row => ({
+      id: String(row.id),
+      user_id: String(row.user_id),
+      item_key: sanitize_text(row.item_key),
+      item_type: sanitize_text(row.item_type, "effect"),
+      equipped: Boolean(row.equipped),
+      meta: as_record(row.meta),
+      created_at: String(row.created_at ?? ""),
+      updated_at: String(row.updated_at ?? ""),
+    })
+  );
+}
+
+function Banner({ flash }: { flash: flash_state }) {
+  if (!flash) return null;
+
+  return (
+    <div
+      className={cx(
+        "rounded-[20px] border px-4 py-4 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.22)]",
+        flash.tone === "success"
+          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+          : "border-red-400/20 bg-red-500/10 text-red-100"
+      )}
+    >
+      {flash.text}
+    </div>
+  );
+}
+
+function Tag({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+}) {
+  const tone_class =
+    tone === "red"
+      ? "border-red-400/20 bg-red-500/10 text-red-100"
+      : tone === "green"
+      ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+      : tone === "gold"
+      ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
+      : tone === "violet"
+      ? "border-fuchsia-400/20 bg-fuchsia-500/10 text-fuchsia-100"
+      : "border-white/10 bg-white/[0.04] text-white/75";
+
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em]",
+        tone_class
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Panel({
+  title,
+  children,
+  right,
+}: {
+  title: string;
+  children: ReactNode;
+  right?: ReactNode;
+}) {
+  return (
+    <section className="relative overflow-hidden rounded-[28px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.34)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.05),transparent_35%),linear-gradient(135deg,rgba(190,20,20,0.08),rgba(255,0,90,0.05),rgba(255,255,255,0.01))]" />
+      <div className="relative z-10">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="bg-gradient-to-r from-red-300/80 via-white/90 to-fuchsia-300/80 bg-clip-text text-[11px] font-black uppercase tracking-[0.35em] text-transparent">
+            {title}
+          </div>
+          {right}
+        </div>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon,
+  tone = "default",
+}: {
+  label: string;
+  value: number | string;
+  icon: ReactNode;
+  tone?: "default" | "red" | "green" | "gold" | "violet";
+}) {
+  const tone_class =
+    tone === "red"
+      ? "border-red-500/14 bg-red-950/10"
+      : tone === "green"
+      ? "border-emerald-500/14 bg-emerald-950/10"
+      : tone === "gold"
+      ? "border-amber-500/14 bg-amber-950/10"
+      : tone === "violet"
+      ? "border-fuchsia-500/14 bg-fuchsia-950/10"
+      : "border-white/10 bg-black/20";
+
+  return (
+    <div
+      className={cx(
+        "rounded-[22px] border p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]",
+        tone_class
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.20em] text-white/34">
+          {label}
+        </div>
+        <div className="text-white/60">{icon}</div>
+      </div>
+      <div className="mt-3 text-2xl font-black tracking-[-0.03em] text-white">
+        {typeof value === "number" ? value.toLocaleString("fr-CA") : value}
+      </div>
+    </div>
+  );
 }
 
 export default function ShopPage() {
   const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [items, setItems] = useState<ShopItemRow[]>([]);
-  const [inventory, setInventory] = useState<InventoryRow[]>([]);
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<ShopFilter>("all");
-  const [buyingSlug, setBuyingSlug] = useState("");
-  const [notice, setNotice] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [sidebar_open, set_sidebar_open] = useState(false);
+  const [loading, set_loading] = useState(true);
+  const [refreshing, set_refreshing] = useState(false);
+  const [flash, set_flash] = useState<flash_state>(null);
 
-  useEffect(() => {
-    void loadPage();
-  }, []);
+  const [profile, set_profile] = useState<profile_row | null>(null);
+  const [items, set_items] = useState<shop_item_row[]>([]);
+  const [inventory, set_inventory] = useState<inventory_item_row[]>([]);
 
-  async function ensureProfile(userId: string, fallbackUsername: string) {
-    const supabase = requireSupabaseBrowserClient();
+  const [search, set_search] = useState("");
+  const [category_filter, set_category_filter] = useState("all");
+  const [rarity_filter, set_rarity_filter] = useState("all");
+  const [owned_filter, set_owned_filter] = useState<owned_filter>("all");
 
-    const { data: profileData, error: profileError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .maybeSingle();
+  const [buying_item_key, set_buying_item_key] = useState<string | null>(null);
+  const [equipping_inventory_id, set_equipping_inventory_id] = useState<string | null>(null);
+  const [unequipping_inventory_id, set_unequipping_inventory_id] = useState<string | null>(null);
 
-    if (profileError) {
-      throw new Error(profileError.message || "Impossible de charger le profil.");
-    }
+  const vip_active = useMemo(() => vip_is_active(profile), [profile]);
 
-    if (profileData) return profileData as ProfileRow;
+  const item_by_key = useMemo(() => {
+    return new Map(items.map((item) => [item.item_key, item]));
+  }, [items]);
 
-    const payload = {
-      id: userId,
-      username: fallbackUsername || "Membre",
-      vip_level: "Standard",
-      ether_balance: 0,
-      is_verified: false,
-    };
-
-    const { error: upsertError } = await supabase
-      .from("profiles")
-      .upsert(payload, { onConflict: "id" });
-
-    if (upsertError) {
-      throw new Error(upsertError.message || "Impossible de créer le profil.");
-    }
-
-    const { data: createdProfile, error: createdError } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (createdError) {
-      throw new Error(createdError.message || "Impossible de relire le profil.");
-    }
-
-    if (!createdProfile) {
-      throw new Error("Profil introuvable après création.");
-    }
-
-    return createdProfile as ProfileRow;
-  }
-
-  async function loadPage() {
-    setLoading(true);
-    setNotice("");
-    setErrorMsg("");
-
-    try {
-      const supabase = requireSupabaseBrowserClient();
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-
-      if (authError || !authData.user) {
-        router.push("/login");
-        return;
-      }
-
-      const authUser = authData.user;
-      const fallbackUsername = String(
-        authUser.user_metadata?.username || authUser.email || "Membre"
-      )
-        .split("@")[0]
-        .slice(0, 24);
-
-      const ensuredProfile = await ensureProfile(authUser.id, fallbackUsername);
-
-      const [{ data: itemRows, error: itemError }, { data: invRows, error: invError }] =
-        await Promise.all([
-          supabase
-            .from("shop_items")
-            .select("*")
-            .eq("is_active", true)
-            .order("created_at", { ascending: false }),
-          supabase
-            .from("user_inventory")
-            .select("*")
-            .eq("user_id", authUser.id)
-            .order("created_at", { ascending: false }),
-        ]);
-
-      if (itemError) {
-        throw new Error(itemError.message || "Impossible de charger les items.");
-      }
-
-      if (invError) {
-        throw new Error(invError.message || "Impossible de charger l’inventaire.");
-      }
-
-      setProfile(ensuredProfile);
-      setItems((itemRows || []) as ShopItemRow[]);
-      setInventory((invRows || []) as InventoryRow[]);
-    } catch (e: any) {
-      setErrorMsg(e?.message || "Erreur chargement boutique.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function refreshProfileAndInventory() {
-    try {
-      const supabase = requireSupabaseBrowserClient();
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData.user) return;
-
-      const [{ data: profileData }, { data: invRows }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", authData.user.id)
-          .maybeSingle(),
-        supabase
-          .from("user_inventory")
-          .select("*")
-          .eq("user_id", authData.user.id)
-          .order("created_at", { ascending: false }),
-      ]);
-
-      setProfile((profileData || null) as ProfileRow | null);
-      setInventory((invRows || []) as InventoryRow[]);
-    } catch {}
-  }
-
-  const ownedMap = useMemo(() => {
-    const map: Record<string, InventoryRow[]> = {};
-    for (const row of inventory) {
-      const slug = String(row.item_slug || "");
-      if (!slug) continue;
-      if (!map[slug]) map[slug] = [];
-      map[slug].push(row);
-    }
-    return map;
+  const owned_item_keys = useMemo(() => {
+    return new Set(inventory.map((entry) => entry.item_key));
   }, [inventory]);
 
-  const activeItems = useMemo(() => inventory.filter((row) => row.is_active), [inventory]);
+  const inventory_view = useMemo<inventory_view_row[]>(() => {
+    return inventory.map((entry) => {
+      const item = item_by_key.get(entry.item_key) ?? null;
+      return {
+        inventory: entry,
+        item,
+        slot: infer_slot_from_item(item, entry),
+      };
+    });
+  }, [inventory, item_by_key]);
 
-  const isVip = useMemo(() => isVipLevel(profile?.vip_level), [profile?.vip_level]);
+  const categories = useMemo(() => {
+    return ["all", ...Array.from(new Set(items.map((item) => item.category))).sort()];
+  }, [items]);
 
-  const filteredItems = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const rarities = useMemo(() => {
+    return ["all", ...Array.from(new Set(items.map((item) => item.rarity))).sort()];
+  }, [items]);
+
+  const filtered_items = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
     return items.filter((item) => {
-      const normalized = itemCategory(item);
-      const categoryOk = filter === "all" ? true : normalized === filter;
+      const owned = owned_item_keys.has(item.item_key);
+      const equipped = inventory.some(
+        (entry) => entry.item_key === item.item_key && entry.equipped
+      );
 
-      const text = [
-        item.slug,
-        item.title,
-        item.description,
-        item.badge,
-        item.category,
-        JSON.stringify(item.metadata || {}),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+      if (category_filter !== "all" && item.category !== category_filter) return false;
+      if (rarity_filter !== "all" && item.rarity !== rarity_filter) return false;
+      if (owned_filter === "owned" && !owned) return false;
+      if (owned_filter === "not_owned" && owned) return false;
+      if (owned_filter === "equipped" && !equipped) return false;
 
-      const searchOk = !q ? true : text.includes(q);
-      const knownType = ["effect", "theme", "bundle"].includes(normalized);
+      if (!query) return true;
 
-      return knownType && categoryOk && searchOk;
+      return (
+        item.title.toLowerCase().includes(query) ||
+        item.description.toLowerCase().includes(query) ||
+        item.category.toLowerCase().includes(query) ||
+        item.rarity.toLowerCase().includes(query) ||
+        item.item_key.toLowerCase().includes(query)
+      );
     });
-  }, [items, search, filter]);
+  }, [items, owned_item_keys, inventory, search, category_filter, rarity_filter, owned_filter]);
 
-  async function buyWithEther(item: ShopItemRow) {
+  const owned_count = inventory.length;
+  const equipped_count = inventory.filter((entry) => entry.equipped).length;
+  const vip_item_count = items.filter((item) => item_requires_vip(item)).length;
+
+  const load_page = useCallback(
+    async (first_load = false) => {
+      try {
+        if (first_load) set_loading(true);
+        else set_refreshing(true);
+
+        set_flash(null);
+
+        const user = await get_connected_user();
+
+        if (!user) {
+          router.replace("/enter");
+          return;
+        }
+
+        const next_profile = await ensure_profile_record(user.id, user.email ?? null);
+        const [next_items, next_inventory] = await Promise.all([
+          list_active_shop_items(),
+          list_inventory_items(user.id),
+        ]);
+
+        set_profile(next_profile);
+        set_items(next_items);
+        set_inventory(next_inventory);
+      } catch (error: any) {
+        set_flash({
+          tone: "error",
+          text: error?.message || "Impossible de charger le store.",
+        });
+      } finally {
+        set_loading(false);
+        set_refreshing(false);
+      }
+    },
+    [router]
+  );
+
+  useEffect(() => {
+    void load_page(true);
+  }, [load_page]);
+
+  async function handle_buy(item: shop_item_row) {
     try {
-      setBuyingSlug(item.slug);
-      setNotice("");
-      setErrorMsg("");
+      if (!profile) return;
 
-      if (isVipOnly(item) && !isVip) {
-        setErrorMsg("Cet item est réservé aux membres VIP.");
-        return;
+      set_flash(null);
+
+      if (owned_item_keys.has(item.item_key)) {
+        throw new Error("Tu possèdes déjà cet item.");
       }
 
+      if (item_requires_vip(item) && !profile.is_vip && !profile.is_admin) {
+        throw new Error("Cet item est réservé aux membres VIP.");
+      }
+
+      if ((profile.credits ?? 0) < item_cost_in_credits(item)) {
+        throw new Error("Crédits insuffisants.");
+      }
+
+      set_buying_item_key(item.item_key);
+
       const supabase = requireSupabaseBrowserClient();
-      const { data, error } = await supabase.rpc("buy_shop_item_with_ether", {
-        item_slug_input: item.slug,
+      const { error } = await supabase.rpc("buy_shop_item", {
+        p_item_key: item.item_key,
       });
 
       if (error) {
-        setErrorMsg(error.message || "Impossible d’acheter cet item.");
-        return;
+        if (String(error.code || "") === "42883") {
+          throw new Error(
+            'La fonction SQL "buy_shop_item" est manquante. Exécute le SQL placé sous ce fichier.'
+          );
+        }
+
+        throw error;
       }
 
-      if (!data?.ok) {
-        setErrorMsg(data?.error || "Achat refusé.");
-        return;
-      }
+      await load_page(false);
 
-      setNotice(`${itemTitle(item)} a été ajouté à ton inventaire.`);
-      await refreshProfileAndInventory();
-    } catch (e: any) {
-      setErrorMsg(e?.message || "Erreur achat Ether.");
+      set_flash({
+        tone: "success",
+        text: `${item.title} acheté avec succès.`,
+      });
+    } catch (error: any) {
+      set_flash({
+        tone: "error",
+        text: error?.message || "Impossible d’acheter cet item.",
+      });
     } finally {
-      setBuyingSlug("");
+      set_buying_item_key(null);
     }
   }
 
-  async function buyWithStripe(item: ShopItemRow) {
+  async function handle_equip(entry: inventory_item_row) {
     try {
-      setBuyingSlug(item.slug);
-      setNotice("");
-      setErrorMsg("");
+      set_flash(null);
+      set_equipping_inventory_id(entry.id);
 
-      if (isVipOnly(item) && !isVip) {
-        setErrorMsg("Cet item est réservé aux membres VIP.");
-        return;
-      }
-
-      if (!item.price_usd || Number(item.price_usd) <= 0) {
-        setErrorMsg("Cet item n’est pas disponible en paiement Stripe.");
-        return;
-      }
-
-      const res = await fetch("/api/stripe/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          priceName: itemTitle(item),
-          amountUsd: Number(item.price_usd),
-          mode: "payment",
-          metadata: {
-            product_slug: item.slug,
-            category: item.category || "effect",
-            auto_equip: String(Boolean(item.metadata?.auto_equip)),
-          },
-        }),
+      const supabase = requireSupabaseBrowserClient();
+      const { error } = await supabase.rpc("equip_inventory_item", {
+        p_inventory_item_id: entry.id,
       });
 
-      const json = await res.json();
+      if (error) {
+        if (String(error.code || "") === "42883") {
+          throw new Error(
+            'La fonction SQL "equip_inventory_item" est manquante. Exécute le SQL placé sous ce fichier.'
+          );
+        }
 
-      if (!res.ok || !json?.url) {
-        setErrorMsg(json?.error || "Impossible de lancer le paiement.");
-        return;
+        throw error;
       }
 
-      window.location.href = json.url;
-    } catch (e: any) {
-      setErrorMsg(e?.message || "Erreur paiement Stripe.");
+      await load_page(false);
+
+      const item = item_by_key.get(entry.item_key);
+      set_flash({
+        tone: "success",
+        text: `${item?.title || entry.item_key} équipé.`,
+      });
+    } catch (error: any) {
+      set_flash({
+        tone: "error",
+        text: error?.message || "Impossible d’équiper cet item.",
+      });
     } finally {
-      setBuyingSlug("");
+      set_equipping_inventory_id(null);
     }
   }
 
-  function actionButton(item: ShopItemRow) {
-    const owned = ownedMap[item.slug] || [];
-    const alreadyOwned = owned.length > 0;
-    const unique = isUnique(item);
-    const vipOnly = isVipOnly(item);
-    const busy = buyingSlug === item.slug;
+  async function handle_unequip(entry: inventory_item_row) {
+    try {
+      set_flash(null);
+      set_unequipping_inventory_id(entry.id);
 
-    if (vipOnly && !isVip) {
-      return (
-        <button className="shop-btn ghost" type="button" onClick={() => router.push("/vip")}>
-          Débloquer VIP
-        </button>
-      );
+      const supabase = requireSupabaseBrowserClient();
+      const { error } = await supabase.rpc("unequip_inventory_item", {
+        p_inventory_item_id: entry.id,
+      });
+
+      if (error) {
+        if (String(error.code || "") === "42883") {
+          throw new Error(
+            'La fonction SQL "unequip_inventory_item" est manquante. Exécute le SQL placé sous ce fichier.'
+          );
+        }
+
+        throw error;
+      }
+
+      await load_page(false);
+
+      const item = item_by_key.get(entry.item_key);
+      set_flash({
+        tone: "success",
+        text: `${item?.title || entry.item_key} déséquipé.`,
+      });
+    } catch (error: any) {
+      set_flash({
+        tone: "error",
+        text: error?.message || "Impossible de déséquiper cet item.",
+      });
+    } finally {
+      set_unequipping_inventory_id(null);
     }
-
-    if (unique && alreadyOwned) {
-      return (
-        <button className="shop-btn ghost" type="button" onClick={() => router.push("/inventaire")}>
-          Déjà possédé
-        </button>
-      );
-    }
-
-    return (
-      <div className="shop-actionRow">
-        {Number(item.price_ether || 0) > 0 ? (
-          <button
-            className="shop-btn gold"
-            type="button"
-            disabled={busy}
-            onClick={() => void buyWithEther(item)}
-          >
-            {busy ? "Achat..." : `${Number(item.price_ether || 0)} Ξ`}
-          </button>
-        ) : null}
-
-        {Number(item.price_usd || 0) > 0 ? (
-          <button
-            className="shop-btn blue"
-            type="button"
-            disabled={busy}
-            onClick={() => void buyWithStripe(item)}
-          >
-            {busy ? "Ouverture..." : `$${Number(item.price_usd || 0).toFixed(2)}`}
-          </button>
-        ) : null}
-      </div>
-    );
   }
 
   if (loading) {
     return (
-      <main className="shop-page">
-        <style>{css}</style>
-        <div className="shop-loading">
-          <div className="shop-loader" />
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
+        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
+          </div>
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            EtherCristal
+          </div>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Shop...
+          </h1>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="shop-page">
-      <style>{css}</style>
+    <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+      <Sidebar open={sidebar_open} onClose={() => set_sidebar_open(false)} />
 
-      <div className="shop-bg shop-bg-a" />
-      <div className="shop-bg shop-bg-b" />
-      <div className="shop-noise" />
-      <div className="shop-orb shop-orb-a" />
-      <div className="shop-orb shop-orb-b" />
+      <div className="relative min-h-screen lg:pl-[290px]">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+          <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+          <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
+        </div>
 
-      <div className="shop-shell">
-        <header className="shop-topbar">
-          <div>
-            <div className="shop-kicker">Boutique EtherCristal</div>
-            <h1 className="shop-title">Effets, thèmes, bundles et premium</h1>
-            <p className="shop-subtitle">
-              Une boutique premium, cohérente et visuelle, pensée pour habiller ton profil et renforcer ton univers.
-            </p>
-          </div>
-
-          <div className="shop-topActions">
-            <button className="shop-navBtn" type="button" onClick={() => router.push("/dashboard")}>
-              Dashboard
+        <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+          <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+            <button
+              type="button"
+              onClick={() => set_sidebar_open(true)}
+              className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+            >
+              <Menu className="h-4 w-4" />
+              Menu
             </button>
-            <button className="shop-navBtn" type="button" onClick={() => router.push("/inventaire")}>
-              Inventaire
+
+            <button
+              type="button"
+              onClick={() => void load_page(false)}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white disabled:opacity-60"
+            >
+              <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+              Refresh
             </button>
-            <button className="shop-navBtn gold" type="button" onClick={() => router.push("/vip")}>
-              VIP
-            </button>
-          </div>
-        </header>
-
-        <section className="shop-heroCard">
-          <div className="shop-accountBlock">
-            <div className="shop-heroLabel">Compte</div>
-            <div className="shop-heroName" style={getProfileNameStyle(profile)}>
-              {getProfileName(profile)}
-            </div>
-            <div className="shop-heroMeta">
-              {profile?.vip_level || "Standard"}
-              {profile?.is_verified ? " • Vérifié" : ""}
-            </div>
-
-            <p className="shop-heroText">
-              Achète des effets visuels, des thèmes et des bundles, puis équipe-les dans l’inventaire pour transformer ton identité sur tout le site.
-            </p>
           </div>
 
-          <div className="shop-statPack">
-            <div className="shop-statCard">
-              <span>Ether</span>
-              <strong>{Number(profile?.ether_balance || 0)} Ξ</strong>
-            </div>
-            <div className="shop-statCard">
-              <span>Items possédés</span>
-              <strong>{inventory.length}</strong>
-            </div>
-            <div className="shop-statCard">
-              <span>Actifs</span>
-              <strong>{activeItems.length}</strong>
-            </div>
-          </div>
-        </section>
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-[30px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)]">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
+              <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                    store technique
+                  </div>
 
-        {notice ? <div className="shop-notice">{notice}</div> : null}
-        {errorMsg ? <div className="shop-error">{errorMsg}</div> : null}
+                  <h1 className="mt-2 text-4xl font-black tracking-[-0.04em] text-white md:text-5xl">
+                    Shop
+                  </h1>
 
-        <section className="shop-section">
-          <div className="shop-sectionHeader">
-            <div>
-              <div className="shop-sectionKicker">Premium</div>
-              <h2 className="shop-sectionTitle vip">Accès VIP & VIP+</h2>
-            </div>
-          </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                    <span className="font-black text-white">{profile?.pseudo || "Membre Ether"}</span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      crédits <span className="font-black text-white">{profile?.credits ?? 0}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      possédés <span className="font-black text-white">{owned_count}</span>
+                    </span>
+                  </div>
 
-          <div className="shop-premiumGrid">
-            {PREMIUM_CARDS.map((card) => (
-              <article key={card.id} className={`shop-premiumCard ${card.accent}`}>
-                <div className="shop-premiumGlow" />
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {profile?.is_admin ? (
+                      <Tag tone="red">
+                        <Shield className="h-3.5 w-3.5" />
+                        admin
+                      </Tag>
+                    ) : null}
 
-                <div className="shop-chipRow">
-                  <span className={`shop-chip ${card.accent === "diamond" ? "diamond" : "vip"}`}>
-                    {card.accent === "diamond" ? "VIP+" : "VIP"}
-                  </span>
+                    {vip_active ? (
+                      <Tag tone="gold">
+                        <Crown className="h-3.5 w-3.5" />
+                        vip
+                      </Tag>
+                    ) : (
+                      <Tag>
+                        <Lock className="h-3.5 w-3.5" />
+                        standard
+                      </Tag>
+                    )}
+
+                    <Tag tone="violet">
+                      <ShoppingBag className="h-3.5 w-3.5" />
+                      {items.length} items
+                    </Tag>
+                  </div>
                 </div>
 
-                <h3 className="shop-cardTitle">{card.title}</h3>
-                <div className="shop-premiumSubtitle">{card.subtitle}</div>
-                <p className="shop-cardText">{card.text}</p>
-
-                <div className="shop-premiumList">
-                  {card.features.map((feature) => (
-                    <div key={feature} className="shop-premiumItem">
-                      {feature}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="shop-cardActions">
+                <div className="flex shrink-0 flex-wrap gap-3">
                   <button
-                    className={`shop-btn ${card.accent === "diamond" ? "blue" : "gold"}`}
                     type="button"
-                    onClick={() => router.push(card.href)}
+                    onClick={() => router.push("/boutique")}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-fuchsia-400/18 bg-fuchsia-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/16"
                   >
-                    {card.cta}
+                    <ShoppingBag className="h-4 w-4" />
+                    Boutique
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/inventaire")}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-emerald-400/18 bg-emerald-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-emerald-100 transition hover:bg-emerald-500/16"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Inventaire
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void load_page(false)}
+                    disabled={refreshing}
+                    className="inline-flex items-center gap-2 rounded-[18px] border border-red-500/12 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-red-900/16 disabled:opacity-60"
+                  >
+                    <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+                    Actualiser
                   </button>
                 </div>
-              </article>
-            ))}
-          </div>
-        </section>
+              </div>
+            </section>
 
-        <section className="shop-filterBar">
-          <input
-            className="shop-search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Chercher un effet, un thème ou un bundle..."
-          />
+            <Banner flash={flash} />
 
-          <div className="shop-pillRow">
-            {FILTERS.map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={`shop-pill ${filter === value ? "active" : ""}`}
-                onClick={() => setFilter(value)}
-              >
-                {FILTER_LABELS[value]}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="shop-section">
-          <div className="shop-sectionHeader">
-            <div>
-              <div className="shop-sectionKicker">Catalogue</div>
-              <h2 className="shop-sectionTitle">Effets & thèmes</h2>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Crédits"
+                value={profile?.credits ?? 0}
+                icon={<Gem className="h-4 w-4" />}
+                tone="gold"
+              />
+              <StatCard
+                label="Objets possédés"
+                value={owned_count}
+                icon={<ShoppingBag className="h-4 w-4" />}
+                tone="violet"
+              />
+              <StatCard
+                label="Objets équipés"
+                value={equipped_count}
+                icon={<Sparkles className="h-4 w-4" />}
+                tone="green"
+              />
+              <StatCard
+                label="Objets VIP"
+                value={vip_item_count}
+                icon={<Crown className="h-4 w-4" />}
+                tone="red"
+              />
             </div>
-          </div>
 
-          {filteredItems.length > 0 ? (
-            <div className="shop-grid">
-              {filteredItems.map((item) => {
-                const tone = visualTone(item);
-                const owned = (ownedMap[item.slug] || []).length > 0;
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <Panel title="Filtres" right={<Tag>{filtered_items.length} visibles</Tag>}>
+                <div className="grid gap-4 xl:grid-cols-[1.2fr_repeat(3,0.6fr)]">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
+                    <input
+                      value={search}
+                      onChange={(event) => set_search(event.target.value)}
+                      placeholder="Recherche item, catégorie, rareté..."
+                      className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-12 py-4 text-sm text-white outline-none placeholder:text-white/28"
+                    />
+                  </div>
 
-                return (
-                  <article key={item.id} className={`shop-card ${tone}`}>
-                    <div className="shop-cardGlow" />
+                  <select
+                    value={category_filter}
+                    onChange={(event) => set_category_filter(event.target.value)}
+                    className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-4 py-4 text-sm text-white outline-none"
+                  >
+                    {categories.map((value) => (
+                      <option key={value} value={value}>
+                        {value === "all" ? "Catégories" : value}
+                      </option>
+                    ))}
+                  </select>
 
-                    <div className="shop-chipRow">
-                      <span className="shop-chip">{itemBadge(item)}</span>
-                      {owned ? <span className="shop-chip active">Possédé</span> : null}
-                      {isUnique(item) ? <span className="shop-chip soft">Unique</span> : null}
-                      {isVipOnly(item) ? <span className="shop-chip vip">VIP requis</span> : null}
+                  <select
+                    value={rarity_filter}
+                    onChange={(event) => set_rarity_filter(event.target.value)}
+                    className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-4 py-4 text-sm text-white outline-none"
+                  >
+                    {rarities.map((value) => (
+                      <option key={value} value={value}>
+                        {value === "all" ? "Raretés" : value}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={owned_filter}
+                    onChange={(event) => set_owned_filter(event.target.value as owned_filter)}
+                    className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-4 py-4 text-sm text-white outline-none"
+                  >
+                    <option value="all">Tous</option>
+                    <option value="owned">Possédés</option>
+                    <option value="not_owned">Non possédés</option>
+                    <option value="equipped">Équipés</option>
+                  </select>
+                </div>
+              </Panel>
+
+              <Panel title="Effets actifs">
+                <div className="grid gap-4">
+                  <div className="rounded-[20px] border border-red-500/10 bg-black/20 p-4">
+                    <div className="text-[10px] uppercase tracking-[0.20em] text-white/34">
+                      active_name_fx_key
                     </div>
-
-                    <h3 className="shop-cardTitle">{itemTitle(item)}</h3>
-                    <p className="shop-cardText">{itemDescription(item)}</p>
-
-                    <div className="shop-priceGrid">
-                      <div className="shop-priceBox">
-                        <span>Ether</span>
-                        <strong>{Number(item.price_ether || 0)} Ξ</strong>
-                      </div>
-                      <div className="shop-priceBox">
-                        <span>Stripe</span>
-                        <strong>
-                          {Number(item.price_usd || 0) > 0
-                            ? `$${Number(item.price_usd || 0).toFixed(2)}`
-                            : "—"}
-                        </strong>
-                      </div>
+                    <div className="mt-2 text-lg font-black text-white">
+                      {profile?.active_name_fx_key || "Aucun"}
                     </div>
+                  </div>
 
-                    <div className="shop-cardActions">{actionButton(item)}</div>
-                  </article>
-                );
-              })}
+                  <div className="rounded-[20px] border border-red-500/10 bg-black/20 p-4">
+                    <div className="text-[10px] uppercase tracking-[0.20em] text-white/34">
+                      active_badge_key
+                    </div>
+                    <div className="mt-2 text-lg font-black text-white">
+                      {profile?.active_badge_key || "Aucun"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[20px] border border-red-500/10 bg-black/20 p-4">
+                    <div className="text-[10px] uppercase tracking-[0.20em] text-white/34">
+                      active_title_key
+                    </div>
+                    <div className="mt-2 text-lg font-black text-white">
+                      {profile?.active_title_key || "Aucun"}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {profile?.active_name_fx_key ? (
+                      <Tag tone="violet">{profile.active_name_fx_key}</Tag>
+                    ) : null}
+                    {profile?.active_badge_key ? (
+                      <Tag tone="gold">{profile.active_badge_key}</Tag>
+                    ) : null}
+                    {profile?.active_title_key ? (
+                      <Tag tone="green">{profile.active_title_key}</Tag>
+                    ) : null}
+                    {!profile?.active_name_fx_key &&
+                    !profile?.active_badge_key &&
+                    !profile?.active_title_key ? (
+                      <Tag>aucun effet actif</Tag>
+                    ) : null}
+                  </div>
+                </div>
+              </Panel>
             </div>
-          ) : (
-            <div className="shop-emptyBox">
-              Aucun effet trouvé. Ajoute d’abord les items dans <code>shop_items</code>.
+
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <Panel title="Grille shop" right={<Tag tone="gold">{items.length} total</Tag>}>
+                {filtered_items.length === 0 ? (
+                  <div className="rounded-[20px] border border-red-500/10 bg-black/20 p-6 text-sm text-white/48">
+                    Aucun item trouvé avec ces filtres.
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {filtered_items.map((item) => {
+                      const owned = owned_item_keys.has(item.item_key);
+                      const equipped = inventory.some(
+                        (entry) => entry.item_key === item.item_key && entry.equipped
+                      );
+                      const vip_locked = item_requires_vip(item) && !vip_active;
+                      const missing_credits =
+                        (profile?.credits ?? 0) < item_cost_in_credits(item);
+                      const buying = buying_item_key === item.item_key;
+
+                      return (
+                        <article
+                          key={item.id}
+                          className="rounded-[24px] border border-red-500/12 bg-black/20 p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-xl font-black tracking-[-0.02em] text-white">
+                                {item.title}
+                              </div>
+
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <Tag tone={rarity_tone(item.rarity) as any}>{item.rarity}</Tag>
+                                <Tag>{item.category}</Tag>
+                                {item.preview_style ? (
+                                  <Tag tone="violet">{item.preview_style}</Tag>
+                                ) : null}
+                                {item_requires_vip(item) ? (
+                                  <Tag tone="gold">
+                                    <Crown className="h-3.5 w-3.5" />
+                                    vip
+                                  </Tag>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div className="text-right">
+                              <div className="text-[10px] uppercase tracking-[0.20em] text-white/34">
+                                prix
+                              </div>
+                              <div className="mt-2 text-lg font-black text-white">
+                                {price_label(item)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 text-sm leading-6 text-white/58">
+                            {item.description || "Aucune description."}
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {owned ? (
+                              <Tag tone="green">possédé</Tag>
+                            ) : vip_locked ? (
+                              <Tag tone="red">
+                                <Lock className="h-3.5 w-3.5" />
+                                verrouillé vip
+                              </Tag>
+                            ) : missing_credits ? (
+                              <Tag tone="red">
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                crédits insuffisants
+                              </Tag>
+                            ) : (
+                              <Tag tone="green">achetable</Tag>
+                            )}
+
+                            {equipped ? <Tag tone="violet">équipé</Tag> : null}
+                          </div>
+
+                          <div className="mt-5">
+                            <button
+                              type="button"
+                              disabled={owned || vip_locked || missing_credits || buying}
+                              onClick={() => void handle_buy(item)}
+                              className={cx(
+                                "inline-flex w-full items-center justify-center gap-2 rounded-[18px] border px-4 py-4 text-sm font-black uppercase tracking-[0.14em] transition disabled:cursor-not-allowed disabled:opacity-55",
+                                owned
+                                  ? "border-white/10 bg-white/[0.04] text-white/60"
+                                  : vip_locked || missing_credits
+                                  ? "border-red-400/18 bg-red-500/10 text-red-100"
+                                  : "border-emerald-400/18 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/16"
+                              )}
+                            >
+                              {buying ? (
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <ShoppingBag className="h-4 w-4" />
+                              )}
+
+                              {owned
+                                ? "Déjà possédé"
+                                : vip_locked
+                                ? "Réservé VIP"
+                                : missing_credits
+                                ? "Crédits insuffisants"
+                                : "Acheter"}
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </Panel>
+
+              <div className="space-y-6">
+                <Panel title="Panneau inventaire rapide" right={<Tag tone="violet">{owned_count} items</Tag>}>
+                  {inventory_view.length === 0 ? (
+                    <div className="rounded-[20px] border border-red-500/10 bg-black/20 p-6 text-sm text-white/48">
+                      Aucun item possédé pour le moment.
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      {inventory_view.map((entry) => {
+                        const title = entry.item?.title || entry.inventory.item_key;
+                        const slot = entry.slot;
+                        const equipping = equipping_inventory_id === entry.inventory.id;
+                        const unequipping = unequipping_inventory_id === entry.inventory.id;
+
+                        return (
+                          <div
+                            key={entry.inventory.id}
+                            className="rounded-[20px] border border-red-500/10 bg-black/20 p-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-base font-black text-white">{title}</div>
+                                <div className="mt-1 text-xs uppercase tracking-[0.18em] text-white/36">
+                                  {slot_label(slot)}
+                                </div>
+
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {entry.item ? (
+                                    <Tag tone={rarity_tone(entry.item.rarity) as any}>
+                                      {entry.item.rarity}
+                                    </Tag>
+                                  ) : null}
+
+                                  {entry.inventory.equipped ? (
+                                    <Tag tone="green">
+                                      <Zap className="h-3.5 w-3.5" />
+                                      équipé
+                                    </Tag>
+                                  ) : (
+                                    <Tag>non équipé</Tag>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <button
+                                type="button"
+                                disabled={entry.inventory.equipped || equipping}
+                                onClick={() => void handle_equip(entry.inventory)}
+                                className="inline-flex items-center justify-center gap-2 rounded-[16px] border border-emerald-400/18 bg-emerald-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-emerald-100 disabled:opacity-55"
+                              >
+                                {equipping ? (
+                                  <RefreshCw className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Sparkles className="h-4 w-4" />
+                                )}
+                                Équiper
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={!entry.inventory.equipped || unequipping}
+                                onClick={() => void handle_unequip(entry.inventory)}
+                                className="inline-flex items-center justify-center gap-2 rounded-[16px] border border-red-400/18 bg-red-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-red-100 disabled:opacity-55"
+                              >
+                                {unequipping ? (
+                                  <RefreshCw className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Wand2 className="h-4 w-4" />
+                                )}
+                                Déséquiper
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Panel>
+              </div>
             </div>
-          )}
-        </section>
+          </div>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
-
-const css = `
-.shop-page{
-  min-height:100vh;
-  position:relative;
-  overflow:hidden;
-  background:
-    radial-gradient(circle at 20% 18%, rgba(212,175,55,0.08), transparent 28%),
-    radial-gradient(circle at 82% 18%, rgba(130,20,50,0.16), transparent 28%),
-    linear-gradient(180deg,#110007 0%, #070205 52%, #020103 100%);
-  color:#fff;
-}
-.shop-bg{
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-}
-.shop-bg-a{
-  background:
-    radial-gradient(circle at 35% 32%, rgba(255,255,255,0.025), transparent 18%),
-    radial-gradient(circle at 70% 72%, rgba(212,175,55,0.05), transparent 22%);
-  filter:blur(10px);
-}
-.shop-bg-b{
-  background:
-    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px),
-    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px);
-  background-size:42px 42px;
-  opacity:.18;
-}
-.shop-noise{
-  position:absolute;
-  inset:0;
-  pointer-events:none;
-  opacity:.03;
-  background-image:
-    radial-gradient(circle at 30% 30%, rgba(255,255,255,0.16) 0, transparent 22%),
-    radial-gradient(circle at 70% 60%, rgba(255,255,255,0.10) 0, transparent 18%);
-}
-.shop-orb{
-  position:absolute;
-  border-radius:999px;
-  filter:blur(60px);
-  opacity:.16;
-  pointer-events:none;
-}
-.shop-orb-a{
-  width:220px;
-  height:220px;
-  left:60px;
-  top:100px;
-  background:rgba(212,175,55,0.42);
-}
-.shop-orb-b{
-  width:260px;
-  height:260px;
-  right:80px;
-  top:160px;
-  background:rgba(180,30,60,0.22);
-}
-.shop-shell{
-  position:relative;
-  z-index:2;
-  max-width:1460px;
-  margin:0 auto;
-  padding:28px 20px 42px;
-}
-.shop-topbar{
-  display:flex;
-  justify-content:space-between;
-  gap:18px;
-  flex-wrap:wrap;
-  align-items:flex-start;
-}
-.shop-kicker{
-  display:inline-flex;
-  min-height:36px;
-  padding:8px 14px;
-  border-radius:999px;
-  background:rgba(212,175,55,0.10);
-  color:#f6dc86;
-  border:1px solid rgba(212,175,55,0.18);
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-}
-.shop-title{
-  margin:16px 0 0;
-  font-size:52px;
-  line-height:.95;
-  letter-spacing:-2px;
-  font-weight:900;
-}
-.shop-subtitle{
-  margin:14px 0 0;
-  max-width:760px;
-  color:rgba(255,245,220,0.72);
-  line-height:1.8;
-  font-size:17px;
-}
-.shop-topActions{
-  display:flex;
-  gap:12px;
-  flex-wrap:wrap;
-}
-.shop-navBtn{
-  min-height:46px;
-  padding:12px 18px;
-  border:none;
-  border-radius:16px;
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.08);
-  color:#fff;
-  font-weight:800;
-  cursor:pointer;
-}
-.shop-navBtn.gold{
-  background:linear-gradient(90deg,#d4af37,#f0d48a);
-  color:#1a0014;
-  border-color:transparent;
-}
-.shop-heroCard{
-  margin-top:24px;
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-  align-items:center;
-  flex-wrap:wrap;
-  padding:22px;
-  border-radius:28px;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)),
-    rgba(255,255,255,0.03);
-  border:1px solid rgba(212,175,55,0.18);
-  backdrop-filter:blur(16px);
-}
-.shop-accountBlock{
-  max-width:760px;
-}
-.shop-heroLabel{
-  font-size:12px;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  color:rgba(255,255,255,0.56);
-}
-.shop-heroName{
-  margin-top:8px;
-  font-size:36px;
-  font-weight:900;
-  line-height:1;
-}
-.shop-heroMeta{
-  margin-top:8px;
-  color:rgba(255,245,220,0.68);
-  font-size:14px;
-}
-.shop-heroText{
-  margin-top:16px;
-  color:rgba(255,245,220,0.76);
-  line-height:1.8;
-}
-.shop-statPack{
-  display:flex;
-  gap:12px;
-  flex-wrap:wrap;
-}
-.shop-statCard{
-  min-width:150px;
-  padding:14px 16px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-}
-.shop-statCard span{
-  display:block;
-  font-size:11px;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  color:rgba(255,255,255,0.54);
-}
-.shop-statCard strong{
-  display:block;
-  margin-top:8px;
-  font-size:24px;
-  color:#fff2cb;
-}
-.shop-notice,
-.shop-error{
-  margin-top:18px;
-  padding:14px 16px;
-  border-radius:18px;
-}
-.shop-notice{
-  background:rgba(212,175,55,0.10);
-  border:1px solid rgba(212,175,55,0.18);
-  color:#fff1c4;
-}
-.shop-error{
-  background:rgba(255,47,67,0.10);
-  border:1px solid rgba(255,47,67,0.18);
-  color:#ffb1ba;
-}
-.shop-section{
-  margin-top:30px;
-}
-.shop-sectionHeader{
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-  align-items:end;
-  flex-wrap:wrap;
-}
-.shop-sectionKicker{
-  display:inline-flex;
-  min-height:30px;
-  padding:6px 12px;
-  border-radius:999px;
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.10);
-  color:#fff1c4;
-  font-size:12px;
-  font-weight:800;
-}
-.shop-sectionTitle{
-  margin:14px 0 0;
-  font-size:38px;
-  line-height:1;
-  font-weight:900;
-}
-.shop-sectionTitle.vip{
-  background:linear-gradient(90deg,#fff0c2,#d4af37,#8ddcff);
-  -webkit-background-clip:text;
-  background-clip:text;
-  color:transparent;
-}
-.shop-premiumGrid{
-  margin-top:20px;
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:18px;
-}
-.shop-premiumCard{
-  position:relative;
-  overflow:hidden;
-  border-radius:30px;
-  padding:24px;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)),
-    rgba(255,255,255,0.03);
-  border:1px solid rgba(212,175,55,0.18);
-  backdrop-filter:blur(16px);
-  min-height:360px;
-  display:flex;
-  flex-direction:column;
-}
-.shop-premiumCard.gold{
-  border-color:rgba(212,175,55,0.26);
-}
-.shop-premiumCard.diamond{
-  border-color:rgba(88,176,255,0.24);
-}
-.shop-premiumGlow{
-  position:absolute;
-  width:220px;
-  height:220px;
-  right:-50px;
-  bottom:-50px;
-  border-radius:999px;
-  filter:blur(42px);
-  opacity:.18;
-}
-.shop-premiumCard.gold .shop-premiumGlow{
-  background:rgba(212,175,55,0.78);
-}
-.shop-premiumCard.diamond .shop-premiumGlow{
-  background:rgba(88,176,255,0.72);
-}
-.shop-premiumSubtitle{
-  margin-top:10px;
-  font-size:16px;
-  color:rgba(255,245,220,0.68);
-}
-.shop-premiumList{
-  margin-top:18px;
-  display:grid;
-  gap:10px;
-}
-.shop-premiumItem{
-  padding:12px 14px;
-  border-radius:16px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-  color:rgba(255,245,220,0.78);
-}
-.shop-filterBar{
-  margin-top:24px;
-  display:grid;
-  gap:14px;
-}
-.shop-search{
-  width:100%;
-  min-height:56px;
-  padding:0 16px;
-  border:none;
-  outline:none;
-  border-radius:18px;
-  background:rgba(255,255,255,0.06);
-  color:#fff;
-  border:1px solid rgba(255,255,255,0.08);
-}
-.shop-search::placeholder{
-  color:rgba(255,255,255,0.42);
-}
-.shop-pillRow{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-}
-.shop-pill{
-  min-height:42px;
-  padding:10px 14px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,0.10);
-  background:rgba(255,255,255,0.04);
-  color:#fff;
-  font-weight:800;
-  cursor:pointer;
-  text-transform:uppercase;
-}
-.shop-pill.active{
-  background:linear-gradient(90deg,#d4af37,#f0d48a);
-  color:#1a0014;
-  border-color:transparent;
-}
-.shop-grid{
-  margin-top:20px;
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:18px;
-}
-.shop-card{
-  position:relative;
-  overflow:hidden;
-  border-radius:28px;
-  padding:22px;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),
-    rgba(255,255,255,0.03);
-  border:1px solid rgba(212,175,55,0.16);
-  backdrop-filter:blur(14px);
-  min-height:340px;
-  display:flex;
-  flex-direction:column;
-}
-.shop-cardGlow{
-  position:absolute;
-  width:180px;
-  height:180px;
-  right:-40px;
-  bottom:-40px;
-  border-radius:999px;
-  filter:blur(36px);
-  opacity:.18;
-}
-.shop-card.default .shop-cardGlow{ background:rgba(255,120,90,0.45); }
-.shop-card.gold .shop-cardGlow{ background:rgba(212,175,55,0.75); }
-.shop-card.vip .shop-cardGlow{ background:rgba(174,92,255,0.65); }
-.shop-card.dark .shop-cardGlow{ background:rgba(85,110,255,0.60); }
-.shop-card.diamond .shop-cardGlow{ background:rgba(90,210,255,0.60); }
-.shop-card.rose .shop-cardGlow{ background:rgba(216,92,114,0.60); }
-.shop-chipRow{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-.shop-chip{
-  display:inline-flex;
-  min-height:30px;
-  padding:6px 10px;
-  border-radius:999px;
-  background:rgba(255,255,255,0.08);
-  border:1px solid rgba(255,255,255,0.10);
-  color:#fff2d3;
-  font-size:11px;
-  font-weight:900;
-}
-.shop-chip.vip{
-  background:rgba(139,92,246,0.16);
-  border-color:rgba(139,92,246,0.26);
-  color:#eadcff;
-}
-.shop-chip.diamond{
-  background:rgba(88,176,255,0.16);
-  border-color:rgba(88,176,255,0.24);
-  color:#dff5ff;
-}
-.shop-chip.active{
-  background:rgba(47,143,88,0.16);
-  border-color:rgba(47,143,88,0.24);
-  color:#b9ffd4;
-}
-.shop-chip.soft{
-  background:rgba(255,255,255,0.06);
-}
-.shop-cardTitle{
-  margin:18px 0 0;
-  font-size:28px;
-  line-height:1;
-  font-weight:900;
-}
-.shop-cardText{
-  margin:14px 0 0;
-  color:rgba(255,245,220,0.72);
-  line-height:1.75;
-  min-height:74px;
-}
-.shop-priceGrid{
-  margin-top:18px;
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:12px;
-}
-.shop-priceBox{
-  padding:14px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.04);
-  border:1px solid rgba(255,255,255,0.08);
-}
-.shop-priceBox span{
-  display:block;
-  font-size:11px;
-  text-transform:uppercase;
-  letter-spacing:.08em;
-  color:rgba(255,255,255,0.54);
-}
-.shop-priceBox strong{
-  display:block;
-  margin-top:8px;
-  font-size:22px;
-  color:#fff2cb;
-}
-.shop-cardActions{
-  margin-top:auto;
-  padding-top:18px;
-}
-.shop-actionRow{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-}
-.shop-btn{
-  min-height:48px;
-  padding:12px 16px;
-  border:none;
-  border-radius:16px;
-  font-weight:900;
-  cursor:pointer;
-}
-.shop-btn.gold{
-  background:linear-gradient(90deg,#d4af37,#f0d48a);
-  color:#1a0014;
-}
-.shop-btn.blue{
-  background:linear-gradient(90deg,#3b82f6,#8ddcff);
-  color:#07131a;
-}
-.shop-btn.ghost{
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.10);
-  color:#fff;
-}
-.shop-emptyBox{
-  margin-top:20px;
-  padding:18px;
-  border-radius:18px;
-  background:rgba(255,255,255,0.03);
-  border:1px solid rgba(255,255,255,0.06);
-  color:rgba(255,245,220,0.74);
-}
-.shop-loading{
-  height:100vh;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:#0a0005;
-}
-.shop-loader{
-  width:64px;
-  height:64px;
-  border:6px solid rgba(212,175,55,0.2);
-  border-top:6px solid #d4af37;
-  border-radius:50%;
-  animation:spin 1.3s linear infinite;
-}
-@keyframes spin{
-  to{transform:rotate(360deg)}
-}
-@media (max-width: 1180px){
-  .shop-premiumGrid,
-  .shop-grid{
-    grid-template-columns:1fr 1fr;
-  }
-}
-@media (max-width: 820px){
-  .shop-title{
-    font-size:40px;
-  }
-  .shop-premiumGrid,
-  .shop-grid{
-    grid-template-columns:1fr;
-  }
-}
-@media (max-width: 560px){
-  .shop-title{
-    font-size:34px;
-  }
-  .shop-statPack{
-    width:100%;
-  }
-  .shop-statCard{
-    flex:1 1 100%;
-  }
-  .shop-heroName{
-    font-size:28px;
-  }
-}
-`;

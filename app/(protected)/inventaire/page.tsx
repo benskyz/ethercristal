@@ -1,636 +1,822 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
-  PackageOpen,
-  Search,
+  Check,
+  Crown,
+  Menu,
   RefreshCw,
+  Shield,
+  ShoppingBag,
+  Sparkles,
   Wand2,
   X,
-  Shield,
-  Crown,
-  Sparkles,
-  Gem,
   Zap,
-  Lock,
 } from "lucide-react";
+import Sidebar from "@/components/Sidebar";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import ProfileName, { DisplayProfile } from "@/components/ProfileName";
-import { SHOP, ShopItem, ShopCategory, rarityBadgeClass, getShopItemByKey } from "@/lib/shop";
+import {
+  ensureProfileRecord,
+  isVipActive,
+  profileDisplayName,
+  type ProfileRow,
+} from "@/lib/profileCompat";
+import {
+  EtherFXStyles,
+  FXBadge,
+  FXName,
+  FXTitle,
+  fxVariantFromKey,
+} from "@/components/effects/EtherFX";
 
-const supabase = requireSupabaseBrowserClient();
-
-type ProfileRow = DisplayProfile & {
-  id: string;
-  credits?: number | null;
-  vip_expires_at?: string | null;
-
-  active_name_fx_key?: string | null;
-  active_badge_key?: string | null;
-  active_title_key?: string | null;
-
-  master_title?: string | null;
-  master_title_style?: string | null;
-};
-
-type InventoryRow = {
+type InventoryItemRow = {
   id: string;
   user_id: string;
   item_key: string;
-  equipped: boolean | null;
+  item_type: string;
+  equipped: boolean;
+  meta: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
-function cx(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
+type ShopItemLite = {
+  id: string;
+  item_key: string;
+  title: string;
+  description: string;
+  category: string;
+  rarity: string;
+  preview_style: string | null;
+  is_active: boolean;
+  metadata: Record<string, unknown>;
+};
+
+type OwnedItem = {
+  inventory: InventoryItemRow;
+  shop: ShopItemLite | null;
+  displayTitle: string;
+  displayDescription: string;
+  slot: "name" | "badge" | "title" | "other";
+  variant: string;
+  rarity: string;
+  category: string;
+  equipped: boolean;
+};
+
+type FlashState =
+  | {
+      tone: "success" | "error";
+      text: string;
+    }
+  | null;
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
-type Tab = "name_fx" | "badge" | "title" | "vip_plan" | "master_ether";
+function safeText(value: unknown, fallback = "") {
+  const s = String(value ?? "").trim();
+  return s || fallback;
+}
 
-function isVipActive(vip_expires_at?: string | null) {
-  if (!vip_expires_at) return false;
-  const d = new Date(vip_expires_at);
-  if (Number.isNaN(d.getTime())) return false;
-  return d > new Date();
+function normalizeInventoryItem(row: Record<string, unknown>): InventoryItemRow {
+  return {
+    id: safeText(row.id),
+    user_id: safeText(row.user_id),
+    item_key: safeText(row.item_key),
+    item_type: safeText(row.item_type, "effect"),
+    equipped: Boolean(row.equipped),
+    meta:
+      row.meta && typeof row.meta === "object"
+        ? (row.meta as Record<string, unknown>)
+        : {},
+    created_at: row.created_at ? String(row.created_at) : null,
+    updated_at: row.updated_at ? String(row.updated_at) : null,
+  };
+}
+
+function normalizeShopItem(row: Record<string, unknown>): ShopItemLite {
+  return {
+    id: safeText(row.id),
+    item_key: safeText(row.item_key),
+    title: safeText(row.title, "Effet"),
+    description: safeText(row.description, "Aucune description."),
+    category: safeText(row.category, "effect"),
+    rarity: safeText(row.rarity, "common"),
+    preview_style: row.preview_style ? String(row.preview_style) : null,
+    is_active: Boolean(row.is_active),
+    metadata:
+      row.metadata && typeof row.metadata === "object"
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+  };
+}
+
+function resolveSlot(category: string, itemType: string) {
+  const raw = `${category} ${itemType}`.toLowerCase();
+
+  if (raw.includes("name")) return "name" as const;
+  if (raw.includes("badge")) return "badge" as const;
+  if (raw.includes("title")) return "title" as const;
+  return "other" as const;
+}
+
+function slotLabel(slot: OwnedItem["slot"]) {
+  if (slot === "name") return "Nom";
+  if (slot === "badge") return "Badge";
+  if (slot === "title") return "Titre";
+  return "Effet";
+}
+
+function rarityVariant(rarity: string) {
+  const raw = rarity.toLowerCase();
+  if (raw.includes("legend")) return "ember";
+  if (raw.includes("epic")) return "void";
+  if (raw.includes("rare")) return "crystal";
+  if (raw.includes("obsidian")) return "obsidian";
+  return "ether";
+}
+
+function FlashBanner({ flash }: { flash: FlashState }) {
+  if (!flash) return null;
+
+  return (
+    <div
+      className={cx(
+        "rounded-[20px] border px-4 py-4 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.22)]",
+        flash.tone === "success"
+          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
+          : "border-red-400/20 bg-red-500/10 text-red-100"
+      )}
+    >
+      {flash.text}
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  children,
+  right,
+}: {
+  title: string;
+  children: ReactNode;
+  right?: ReactNode;
+}) {
+  return (
+    <section className="relative overflow-hidden rounded-[30px] border border-red-500/12 bg-[#0d0d12] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.34)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.05),transparent_35%),linear-gradient(135deg,rgba(190,20,20,0.08),rgba(255,0,90,0.05),rgba(255,255,255,0.01))]" />
+      <div className="relative z-10">
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div className="bg-gradient-to-r from-red-300/80 via-white/90 to-fuchsia-300/80 bg-clip-text text-[11px] font-black uppercase tracking-[0.35em] text-transparent">
+            {title}
+          </div>
+          {right}
+        </div>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function InventoryCard({
+  item,
+  busy,
+  onEquip,
+  onUnequip,
+}: {
+  item: OwnedItem;
+  busy: boolean;
+  onEquip: () => void;
+  onUnequip: () => void;
+}) {
+  return (
+    <div className="group relative overflow-hidden rounded-[28px] border border-red-500/12 bg-[#0b0b10] p-5 shadow-[0_16px_45px_rgba(0,0,0,0.32)] transition duration-300 hover:-translate-y-1 hover:border-red-400/18">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,0,90,0.08),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.04),transparent_26%)]" />
+
+      <div className="relative z-10">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <FXName
+              text={item.displayTitle}
+              variant={item.variant}
+              size="lg"
+              className="truncate"
+            />
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <FXBadge label={slotLabel(item.slot)} variant="crystal" />
+              <FXBadge label={item.rarity} variant={rarityVariant(item.rarity)} />
+              {item.equipped ? (
+                <FXBadge
+                  label="Équipé"
+                  variant="ember"
+                  icon={<Check className="h-3.5 w-3.5" />}
+                />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[16px] border border-white/10 bg-white/[0.04] text-white/70">
+            <Wand2 className="h-5 w-5" />
+          </div>
+        </div>
+
+        <p className="mt-4 min-h-[72px] text-sm leading-6 text-white/58">
+          {item.displayDescription}
+        </p>
+
+        <div className="mt-5 flex gap-3">
+          {item.equipped ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onUnequip}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-[16px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/80 transition hover:bg-white/[0.07] disabled:opacity-50"
+            >
+              {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+              Déséquiper
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onEquip}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-[16px] border border-fuchsia-400/18 bg-fuchsia-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/16 disabled:opacity-50"
+            >
+              {busy ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Zap className="h-4 w-4" />
+              )}
+              Équiper
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function InventairePage() {
   const router = useRouter();
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [inventory, setInventory] = useState<InventoryRow[]>([]);
+  const [inventoryRows, setInventoryRows] = useState<InventoryItemRow[]>([]);
+  const [shopItems, setShopItems] = useState<ShopItemLite[]>([]);
+  const [flash, setFlash] = useState<FlashState>(null);
 
-  const [tab, setTab] = useState<Tab>("name_fx");
-  const [query, setQuery] = useState("");
+  const vipActive = useMemo(() => isVipActive(profile), [profile]);
+  const isAdmin = Boolean(profile?.is_admin);
 
-  const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
+  const ownedItems = useMemo<OwnedItem[]>(() => {
+    const shopMap = new Map(shopItems.map((item) => [item.item_key, item]));
 
-  const isAdmin = Boolean(profile?.is_admin || profile?.role === "admin");
-  const vipOk = isVipActive(profile?.vip_expires_at) || isAdmin;
+    return inventoryRows
+      .map((inventory) => {
+        const shop = shopMap.get(inventory.item_key) ?? null;
+        const category = shop?.category || inventory.item_type || "effect";
+        const slot = resolveSlot(category, inventory.item_type);
+        const variant = fxVariantFromKey(
+          shop?.preview_style || shop?.item_key || inventory.item_key || "ether"
+        );
 
-  const ownedKeys = useMemo(() => new Set(inventory.map((i) => i.item_key)), [inventory]);
+        const effectivelyEquipped =
+          slot === "name"
+            ? profile?.active_name_fx_key === inventory.item_key
+            : slot === "badge"
+            ? profile?.active_badge_key === inventory.item_key
+            : slot === "title"
+            ? profile?.active_title_key === inventory.item_key
+            : inventory.equipped;
 
-  const ownedItems = useMemo(() => {
-    // items = inventory items join SHOP
-    const list: ShopItem[] = [];
-    for (const row of inventory) {
-      const item = getShopItemByKey(row.item_key);
-      if (item) list.push(item);
+        return {
+          inventory,
+          shop,
+          displayTitle: shop?.title || inventory.item_key,
+          displayDescription:
+            shop?.description || "Effet acheté dans ta boutique.",
+          slot,
+          variant,
+          rarity: shop?.rarity || "common",
+          category,
+          equipped: effectivelyEquipped,
+        };
+      })
+      .sort((a, b) => {
+        if (a.equipped !== b.equipped) return a.equipped ? -1 : 1;
+        return a.displayTitle.localeCompare(b.displayTitle);
+      });
+  }, [inventoryRows, shopItems, profile]);
+
+  const equippedCount = useMemo(
+    () => ownedItems.filter((item) => item.equipped).length,
+    [ownedItems]
+  );
+
+  const groupedOwned = useMemo(() => {
+    const groups = new Map<string, OwnedItem[]>();
+
+    for (const item of ownedItems) {
+      const key = item.slot;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
     }
-    return list;
-  }, [inventory]);
 
-  // group categories
-  const byCat = useMemo(() => {
-    const map = new Map<ShopCategory, ShopItem[]>();
-    for (const it of ownedItems) {
-      const arr = map.get(it.category) ?? [];
-      arr.push(it);
-      map.set(it.category, arr);
-    }
-    // sort: rarity then price
-    const rank: Record<string, number> = { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4, MYTHIC: 5 };
-    for (const [k, arr] of map.entries()) {
-      arr.sort((a, b) => (rank[b.rarity] - rank[a.rarity]) || (b.price - a.price));
-      map.set(k, arr);
-    }
-    return map;
+    return [...groups.entries()].map(([slot, items]) => ({
+      slot,
+      label: slotLabel(slot as OwnedItem["slot"]),
+      items,
+    }));
   }, [ownedItems]);
 
-  const visibleItems = useMemo(() => {
-    const cat = tab as ShopCategory;
-    const base = byCat.get(cat) ?? [];
+  const loadPage = useCallback(
+    async (firstLoad = false) => {
+      try {
+        if (firstLoad) setLoading(true);
+        else setRefreshing(true);
 
-    const q = query.trim().toLowerCase();
-    if (!q) return base;
+        setFlash(null);
 
-    return base.filter((it) => {
-      const text = `${it.name} ${it.description} ${it.vibe} ${it.rarity}`.toLowerCase();
-      return text.includes(q);
-    });
-  }, [byCat, tab, query]);
+        const supabase = requireSupabaseBrowserClient();
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-  const activeNameFx = profile?.active_name_fx_key ?? null;
-  const activeBadge = profile?.active_badge_key ?? null;
-  const activeTitle = profile?.active_title_key ?? null;
-
-  async function getAuthedUserOrRedirect() {
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) {
-      router.push("/enter");
-      return null;
-    }
-    return user;
-  }
-
-  async function loadAll() {
-    setLoading(true);
-    setError("");
-    setInfo("");
-
-    const user = await getAuthedUserOrRedirect();
-    if (!user) return;
-
-    const [pRes, invRes] = await Promise.all([
-      supabase
-        .from("profiles")
-        .select(
-          "id, pseudo, credits, vip_expires_at, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title, master_title_style"
-        )
-        .eq("id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("inventory_items")
-        .select("id, user_id, item_key, equipped")
-        .eq("user_id", user.id),
-    ]);
-
-    if (pRes.error) setError(pRes.error.message);
-    else setProfile((pRes.data as any) ?? null);
-
-    if (invRes.error) setError((prev) => prev || invRes.error!.message);
-    else setInventory((invRes.data ?? []) as InventoryRow[]);
-
-    setLoading(false);
-  }
-
-  async function refreshAll() {
-    setRefreshing(true);
-    await loadAll();
-    setRefreshing(false);
-  }
-
-  useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function iconForTab(t: Tab) {
-    if (t === "name_fx") return <Sparkles className="h-4 w-4" />;
-    if (t === "badge") return <Gem className="h-4 w-4" />;
-    if (t === "title") return <Zap className="h-4 w-4" />;
-    if (t === "vip_plan") return <Crown className="h-4 w-4" />;
-    return <Wand2 className="h-4 w-4" />;
-  }
-
-  function isActive(item: ShopItem) {
-    if (!profile) return false;
-    if (item.category === "name_fx") return profile.active_name_fx_key === item.key;
-    if (item.category === "badge") return profile.active_badge_key === item.key;
-    if (item.category === "title") return profile.active_title_key === item.key;
-    if (item.category === "master_ether") return Boolean(isAdmin && profile.master_title === (item.titleText ?? item.name));
-    if (item.category === "vip_plan") return vipOk;
-    return false;
-  }
-
-  async function deactivateCategory(cat: ShopCategory) {
-    if (!profile?.id) return;
-    setError(""); setInfo("");
-
-    try {
-      const patch: any = {};
-      if (cat === "name_fx") patch.active_name_fx_key = null;
-      if (cat === "badge") patch.active_badge_key = null;
-      if (cat === "title") patch.active_title_key = null;
-      if (cat === "master_ether") {
-        if (!isAdmin) return;
-        patch.master_title = null;
-        patch.master_title_style = null;
-      }
-
-      const { error } = await supabase.from("profiles").update(patch).eq("id", profile.id);
-      if (error) throw new Error(error.message);
-
-      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
-      setInfo("Désactivé ✅");
-    } catch (e: any) {
-      setError(e?.message || "Erreur désactivation.");
-    }
-  }
-
-  async function activate(item: ShopItem) {
-    if (!profile?.id) return;
-    setError(""); setInfo("");
-
-    try {
-      // security checks
-      if (item.category === "master_ether" && !isAdmin) {
-        setError("Réservé au Maître Ether.");
-        return;
-      }
-      if (item.category !== "vip_plan" && item.category !== "master_ether") {
-        if (!ownedKeys.has(item.key)) {
-          setError("Tu ne possèdes pas cet item.");
+        if (authError || !user) {
+          router.replace("/enter");
           return;
         }
+
+        const nextProfile = await ensureProfileRecord(user);
+
+        const [inventoryRes, shopRes] = await Promise.all([
+          supabase
+            .from("inventory_items")
+            .select("*")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
+          supabase.from("shop_items").select("*"),
+        ]);
+
+        if (inventoryRes.error) throw inventoryRes.error;
+        if (shopRes.error) throw shopRes.error;
+
+        setProfile(nextProfile);
+        setInventoryRows(
+          ((inventoryRes.data ?? []) as Record<string, unknown>[]).map(
+            normalizeInventoryItem
+          )
+        );
+        setShopItems(
+          ((shopRes.data ?? []) as Record<string, unknown>[]).map(normalizeShopItem)
+        );
+      } catch (e: any) {
+        setFlash({
+          tone: "error",
+          text: e?.message || "Impossible de charger l’inventaire.",
+        });
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [router]
+  );
+
+  useEffect(() => {
+    void loadPage(true);
+  }, [loadPage]);
+
+  async function syncEquipmentToProfile(next: {
+    active_name_fx_key?: string | null;
+    active_badge_key?: string | null;
+    active_title_key?: string | null;
+  }) {
+    if (!profile) return;
+
+    const supabase = requireSupabaseBrowserClient();
+
+    const { error } = await supabase
+      .from("profiles")
+      .update(next)
+      .eq("id", profile.id);
+
+    if (error) throw error;
+
+    setProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            active_name_fx_key:
+              next.active_name_fx_key !== undefined
+                ? next.active_name_fx_key
+                : prev.active_name_fx_key,
+            active_badge_key:
+              next.active_badge_key !== undefined
+                ? next.active_badge_key
+                : prev.active_badge_key,
+            active_title_key:
+              next.active_title_key !== undefined
+                ? next.active_title_key
+                : prev.active_title_key,
+          }
+        : prev
+    );
+  }
+
+  async function handleEquip(item: OwnedItem) {
+    if (!profile) return;
+
+    try {
+      setBusyKey(item.inventory.id);
+      const supabase = requireSupabaseBrowserClient();
+
+      if (item.slot === "name") {
+        const sameSlotIds = ownedItems
+          .filter((row) => row.slot === "name")
+          .map((row) => row.inventory.id);
+
+        if (sameSlotIds.length > 0) {
+          await supabase
+            .from("inventory_items")
+            .update({ equipped: false })
+            .in("id", sameSlotIds);
+        }
+
+        await supabase
+          .from("inventory_items")
+          .update({ equipped: true })
+          .eq("id", item.inventory.id);
+
+        await syncEquipmentToProfile({
+          active_name_fx_key: item.inventory.item_key,
+        });
+      } else if (item.slot === "badge") {
+        const sameSlotIds = ownedItems
+          .filter((row) => row.slot === "badge")
+          .map((row) => row.inventory.id);
+
+        if (sameSlotIds.length > 0) {
+          await supabase
+            .from("inventory_items")
+            .update({ equipped: false })
+            .in("id", sameSlotIds);
+        }
+
+        await supabase
+          .from("inventory_items")
+          .update({ equipped: true })
+          .eq("id", item.inventory.id);
+
+        await syncEquipmentToProfile({
+          active_badge_key: item.inventory.item_key,
+        });
+      } else if (item.slot === "title") {
+        const sameSlotIds = ownedItems
+          .filter((row) => row.slot === "title")
+          .map((row) => row.inventory.id);
+
+        if (sameSlotIds.length > 0) {
+          await supabase
+            .from("inventory_items")
+            .update({ equipped: false })
+            .in("id", sameSlotIds);
+        }
+
+        await supabase
+          .from("inventory_items")
+          .update({ equipped: true })
+          .eq("id", item.inventory.id);
+
+        await syncEquipmentToProfile({
+          active_title_key: item.inventory.item_key,
+        });
+      } else {
+        const { error } = await supabase
+          .from("inventory_items")
+          .update({ equipped: true })
+          .eq("id", item.inventory.id);
+
+        if (error) throw error;
       }
 
-      const patch: any = {};
+      setFlash({
+        tone: "success",
+        text: `${item.displayTitle} équipé.`,
+      });
 
-      if (item.category === "name_fx") patch.active_name_fx_key = item.key;
-      if (item.category === "badge") patch.active_badge_key = item.key;
-      if (item.category === "title") patch.active_title_key = item.key;
-
-      if (item.category === "master_ether") {
-        patch.master_title = item.titleText ?? item.name;
-        patch.master_title_style = item.previewClass ?? "text-white/70";
-      }
-
-      const { error } = await supabase.from("profiles").update(patch).eq("id", profile.id);
-      if (error) throw new Error(error.message);
-
-      setProfile((p) => (p ? ({ ...p, ...patch } as any) : p));
-      setInfo(`Activé : ${item.name} ✨`);
+      await loadPage(false);
     } catch (e: any) {
-      setError(e?.message || "Erreur activation.");
+      setFlash({
+        tone: "error",
+        text: e?.message || "Impossible d’équiper cet item.",
+      });
+    } finally {
+      setBusyKey(null);
     }
   }
 
-  // Tabs visibility
-  const tabs: Array<{ key: Tab; label: string; show: boolean }> = [
-    { key: "name_fx", label: "Effets nom", show: true },
-    { key: "badge", label: "Badges", show: true },
-    { key: "title", label: "Titres", show: true },
-    { key: "vip_plan", label: "VIP", show: true },
-    { key: "master_ether", label: "Maître Ether", show: isAdmin },
-  ];
+  async function handleUnequip(item: OwnedItem) {
+    if (!profile) return;
 
-  // show an “owned count”
-  const counts = useMemo(() => {
-    const res: Record<string, number> = {};
-    for (const t of ["name_fx", "badge", "title", "vip_plan", "master_ether"]) {
-      res[t] = (byCat.get(t as any) ?? []).length;
+    try {
+      setBusyKey(item.inventory.id);
+      const supabase = requireSupabaseBrowserClient();
+
+      const { error } = await supabase
+        .from("inventory_items")
+        .update({ equipped: false })
+        .eq("id", item.inventory.id);
+
+      if (error) throw error;
+
+      if (item.slot === "name" && profile.active_name_fx_key === item.inventory.item_key) {
+        await syncEquipmentToProfile({ active_name_fx_key: null });
+      }
+
+      if (item.slot === "badge" && profile.active_badge_key === item.inventory.item_key) {
+        await syncEquipmentToProfile({ active_badge_key: null });
+      }
+
+      if (item.slot === "title" && profile.active_title_key === item.inventory.item_key) {
+        await syncEquipmentToProfile({ active_title_key: null });
+      }
+
+      setFlash({
+        tone: "success",
+        text: `${item.displayTitle} déséquipé.`,
+      });
+
+      await loadPage(false);
+    } catch (e: any) {
+      setFlash({
+        tone: "error",
+        text: e?.message || "Impossible de déséquiper cet item.",
+      });
+    } finally {
+      setBusyKey(null);
     }
-    return res;
-  }, [byCat]);
+  }
 
-  // preview item active
-  const previewNameFx = useMemo(() => (activeNameFx ? getShopItemByKey(activeNameFx) : null), [activeNameFx]);
+  if (loading) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
+        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
+          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
+            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
+          </div>
+          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
+            EtherCristal
+          </div>
+          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
+            Chargement inventaire...
+          </h1>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <section className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_25px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl sm:p-8">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.14),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
+    <>
+      <EtherFXStyles />
 
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white/55">
-              <PackageOpen className="h-3.5 w-3.5" />
-              Inventaire
+      <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+        <div className="relative min-h-screen lg:pl-[290px]">
+          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
+            <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
+            <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
+          </div>
+
+          <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
+            <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+              >
+                <Menu className="h-4 w-4" />
+                Menu
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void loadPage(false)}
+                className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
+              >
+                <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
+                Refresh
+              </button>
             </div>
 
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-5xl">
-              Tes objets & effets
-            </h1>
+            <div className="space-y-6">
+              <section className="relative overflow-hidden rounded-[34px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)] sm:p-8">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
 
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/62 sm:text-base">
-              Active tes effets ici : ton pseudo se met à jour partout.
-            </p>
-
-            {profile ? (
-              <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <div className="rounded-[28px] border border-white/10 bg-black/30 p-5">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/40">Aperçu</div>
-                  <div className="mt-3">
-                    <ProfileName profile={profile} size="lg" showTitle />
+                <div className="relative z-10">
+                  <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
+                    inventaire visuel
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs font-black">
-                    <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-white/70">
-                      {profile.credits ?? 0} crédits
-                    </span>
-                    <span
-                      className={cx(
-                        "rounded-full border px-3 py-1",
-                        vipOk
-                          ? "border-amber-400/20 bg-amber-500/10 text-amber-200"
-                          : "border-white/10 bg-white/10 text-white/55"
-                      )}
-                    >
-                      {vipOk ? "VIP actif" : "Non VIP"}
-                    </span>
-                    {isAdmin ? (
-                      <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-violet-200">
-                        Maître Ether
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
 
-                <div className="rounded-[28px] border border-white/10 bg-black/30 p-5">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/40">Actif</div>
-                  <div className="mt-3 space-y-2 text-sm text-white/70">
-                    <div>
-                      <span className="text-white/45">Nom :</span>{" "}
-                      <span className="font-black text-white/85">
-                        {previewNameFx?.name ?? "Aucun"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-white/45">Badge :</span>{" "}
-                      <span className="font-black text-white/85">
-                        {activeBadge ? (getShopItemByKey(activeBadge)?.name ?? activeBadge) : "Aucun"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-white/45">Titre :</span>{" "}
-                      <span className="font-black text-white/85">
-                        {activeTitle ? (getShopItemByKey(activeTitle)?.name ?? activeTitle) : "Aucun"}
-                      </span>
-                    </div>
-                    {isAdmin ? (
-                      <div>
-                        <span className="text-white/45">Ether :</span>{" "}
-                        <span className="font-black text-white/85">
-                          {profile.master_title ?? "Aucun"}
-                        </span>
-                      </div>
-                    ) : null}
+                  <h1 className="mt-3 text-4xl font-black tracking-[-0.04em] text-white md:text-6xl">
+                    Inventaire
+                    <span className="block bg-gradient-to-r from-red-200 via-white to-fuchsia-200 bg-clip-text text-transparent">
+                      équipe tes effets
+                    </span>
+                  </h1>
+
+                  <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-white/64">
+                    <span className="font-black text-white">
+                      {profileDisplayName(profile)}
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      items <span className="font-black text-white">{ownedItems.length}</span>
+                    </span>
+                    <span className="text-white/20">•</span>
+                    <span>
+                      équipés <span className="font-black text-white">{equippedCount}</span>
+                    </span>
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      onClick={() => router.push("/boutique")}
-                      className="rounded-2xl bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 px-4 py-2.5 text-sm font-black text-black hover:opacity-95"
-                    >
-                      Aller à la boutique
-                    </button>
+                    {vipActive ? (
+                      <FXBadge
+                        label="VIP actif"
+                        variant="obsidian"
+                        icon={<Crown className="h-3.5 w-3.5" />}
+                      />
+                    ) : (
+                      <FXBadge label="Standard" variant="ether" />
+                    )}
 
-                    <button
-                      onClick={refreshAll}
-                      disabled={refreshing}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/10 disabled:opacity-60"
-                    >
-                      <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
-                      Actualiser
-                    </button>
+                    {isAdmin ? (
+                      <FXBadge
+                        label="Admin"
+                        variant="ember"
+                        icon={<Shield className="h-3.5 w-3.5" />}
+                      />
+                    ) : null}
                   </div>
                 </div>
+              </section>
+
+              <FlashBanner flash={flash} />
+
+              <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+                <div className="space-y-6">
+                  {groupedOwned.length === 0 ? (
+                    <Panel title="Aucun item">
+                      <div className="rounded-[24px] border border-red-500/12 bg-black/20 p-8 text-center">
+                        <div className="text-2xl font-black text-white">
+                          Ton inventaire est vide.
+                        </div>
+                        <div className="mt-3 text-sm text-white/52">
+                          Passe par la boutique pour acheter tes effets.
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => router.push("/boutique")}
+                          className="mt-6 inline-flex items-center gap-2 rounded-[18px] border border-fuchsia-400/18 bg-fuchsia-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-fuchsia-100 transition hover:bg-fuchsia-500/16"
+                        >
+                          <ShoppingBag className="h-4 w-4" />
+                          Ouvrir boutique
+                        </button>
+                      </div>
+                    </Panel>
+                  ) : (
+                    groupedOwned.map((group) => (
+                      <Panel
+                        key={group.slot}
+                        title={group.label}
+                        right={
+                          <FXBadge
+                            label={`${group.items.length} item(s)`}
+                            variant="ruby"
+                          />
+                        }
+                      >
+                        <div className="grid gap-4 md:grid-cols-2">
+                          {group.items.map((item) => (
+                            <InventoryCard
+                              key={item.inventory.id}
+                              item={item}
+                              busy={busyKey === item.inventory.id}
+                              onEquip={() => void handleEquip(item)}
+                              onUnequip={() => void handleUnequip(item)}
+                            />
+                          ))}
+                        </div>
+                      </Panel>
+                    ))
+                  )}
+                </div>
+
+                <div className="space-y-6 xl:sticky xl:top-8 xl:self-start">
+                  <Panel
+                    title="Prévisualisation active"
+                    right={
+                      <FXBadge
+                        label={`${equippedCount} actif(s)`}
+                        variant="crystal"
+                      />
+                    }
+                  >
+                    <div className="rounded-[26px] border border-red-500/12 bg-black/20 p-6">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                        rendu profil
+                      </div>
+
+                      <div className="mt-4">
+                        <FXName
+                          text={profileDisplayName(profile)}
+                          variant={profile?.active_name_fx_key || "ether"}
+                          size="xl"
+                        />
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {profile?.active_badge_key ? (
+                          <FXBadge
+                            label={profile.active_badge_key}
+                            variant={profile.active_badge_key}
+                            icon={<Sparkles className="h-3.5 w-3.5" />}
+                          />
+                        ) : null}
+
+                        {profile?.master_title ? (
+                          <FXTitle
+                            label={profile.master_title}
+                            variant={profile?.active_title_key || "void"}
+                          />
+                        ) : null}
+
+                        {isAdmin ? (
+                          <FXBadge
+                            label="Admin"
+                            variant="ember"
+                            icon={<Shield className="h-3.5 w-3.5" />}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  </Panel>
+
+                  <Panel title="Résumé">
+                    <div className="grid gap-4">
+                      <div className="rounded-[22px] border border-red-500/12 bg-black/20 p-5">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                          Nom équipé
+                        </div>
+                        <div className="mt-2 text-sm text-white/70">
+                          {profile?.active_name_fx_key || "Aucun"}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[22px] border border-red-500/12 bg-black/20 p-5">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                          Badge équipé
+                        </div>
+                        <div className="mt-2 text-sm text-white/70">
+                          {profile?.active_badge_key || "Aucun"}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[22px] border border-red-500/12 bg-black/20 p-5">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
+                          Titre équipé
+                        </div>
+                        <div className="mt-2 text-sm text-white/70">
+                          {profile?.active_title_key || "Aucun"}
+                        </div>
+                      </div>
+                    </div>
+                  </Panel>
+                </div>
               </div>
-            ) : null}
-          </div>
-
-          {/* Search */}
-          <div className="w-full max-w-md">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Rechercher dans l'inventaire..."
-                className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-11 pr-4 text-sm text-white outline-none transition focus:border-rose-400/35"
-              />
             </div>
           </div>
         </div>
-
-        {/* Tabs */}
-        <div className="relative mt-6 flex flex-wrap gap-2">
-          {tabs.filter((t) => t.show).map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={cx(
-                "inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-black transition",
-                tab === t.key
-                  ? "border-white/10 bg-white/15 text-white"
-                  : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
-              )}
-            >
-              {iconForTab(t.key)}
-              {t.label}
-              <span className="ml-1 rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[11px] text-white/70">
-                {counts[t.key] ?? 0}
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      ) : null}
-
-      {info ? (
-        <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          {info}
-        </div>
-      ) : null}
-
-      {/* Content */}
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className="h-[260px] animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-          ))}
-        </div>
-      ) : tab === "vip_plan" ? (
-        <VipPanel vipOk={vipOk} />
-      ) : tab === "master_ether" && !isAdmin ? (
-        <LockedPanel />
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visibleItems.length === 0 ? (
-            <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-8 text-center shadow-[0_20px_60px_rgba(0,0,0,0.25)] backdrop-blur-xl md:col-span-2 xl:col-span-3">
-              <h2 className="text-2xl font-black text-white">Rien ici</h2>
-              <p className="mt-2 text-white/60">Essaie une autre recherche ou catégorie.</p>
-            </div>
-          ) : (
-            visibleItems.map((item) => {
-              const active = isActive(item);
-              const owned = ownedKeys.has(item.key);
-
-              return (
-                <ItemCard
-                  key={item.key}
-                  item={item}
-                  active={active}
-                  owned={owned}
-                  isAdmin={isAdmin}
-                  onActivate={() => activate(item)}
-                  onDeactivate={() => deactivateCategory(item.category)}
-                />
-              );
-            })
-          )}
-        </div>
-      )}
-    </div>
+      </div>
+    </>
   );
-}
-
-function VipPanel({ vipOk }: { vipOk: boolean }) {
-  return (
-    <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-      <div className="flex items-center gap-2 text-white font-black text-xl">
-        <Crown className="h-5 w-5 text-amber-200" />
-        VIP
-      </div>
-      <p className="mt-2 text-sm text-white/60">
-        Ton statut VIP est géré depuis la boutique (achat/activation). Ici, on affiche l’état.
-      </p>
-
-      <div className={cx(
-        "mt-5 rounded-2xl border p-4",
-        vipOk ? "border-amber-400/20 bg-amber-500/10" : "border-white/10 bg-white/5"
-      )}>
-        <div className="text-sm font-black">
-          {vipOk ? "VIP actif ✅" : "Non VIP"}
-        </div>
-        <div className="mt-1 text-xs text-white/60">
-          Va dans Boutique → VIP pour acheter/étendre ton accès.
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function LockedPanel() {
-  return (
-    <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-      <div className="flex items-center gap-2 text-white font-black text-xl">
-        <Lock className="h-5 w-5" />
-        Réservé
-      </div>
-      <p className="mt-2 text-sm text-white/60">
-        Cette section est réservée au Maître Ether.
-      </p>
-    </section>
-  );
-}
-
-function ItemCard({
-  item,
-  active,
-  owned,
-  isAdmin,
-  onActivate,
-  onDeactivate,
-}: {
-  item: ShopItem;
-  active: boolean;
-  owned: boolean;
-  isAdmin: boolean;
-  onActivate: () => void;
-  onDeactivate: () => void;
-}) {
-  const isMaster = item.category === "master_ether";
-  const canUse = !isMaster || isAdmin;
-
-  return (
-    <article className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/[0.06]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap gap-2">
-            <span className={cx("rounded-full border px-2.5 py-1 text-[10px] font-black tracking-[0.16em]", rarityBadgeClass(item.rarity))}>
-              {item.rarity}
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/65">
-              {item.vibe}
-            </span>
-            {active ? (
-              <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black text-emerald-200">
-                ACTIF
-              </span>
-            ) : null}
-            {owned && !active && !isMaster ? (
-              <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black text-white/60">
-                POSSÉDÉ
-              </span>
-            ) : null}
-            {isMaster ? (
-              <span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2.5 py-1 text-[10px] font-black text-violet-200">
-                ETHER
-              </span>
-            ) : null}
-          </div>
-
-          <h3 className="mt-4 truncate text-2xl font-black text-white">{item.name}</h3>
-          <p className="mt-2 text-sm leading-6 text-white/60">{item.description}</p>
-        </div>
-
-        <div className="grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/5">
-          {item.category === "name_fx" ? (
-            <Sparkles className="h-5 w-5 text-fuchsia-200" />
-          ) : item.category === "badge" ? (
-            <Gem className="h-5 w-5 text-cyan-200" />
-          ) : item.category === "title" ? (
-            <Zap className="h-5 w-5 text-rose-200" />
-          ) : item.category === "master_ether" ? (
-            <Wand2 className="h-5 w-5 text-violet-200" />
-          ) : (
-            <Crown className="h-5 w-5 text-amber-200" />
-          )}
-        </div>
-      </div>
-
-      {/* Preview */}
-      <div className="mt-5 rounded-2xl border border-white/10 bg-black/25 p-4">
-        <div className="text-xs uppercase tracking-[0.22em] text-white/40">Preview</div>
-
-        {item.category === "name_fx" ? (
-          <div className={cx("mt-2 text-2xl font-black", item.previewClass || "text-white")}>
-            Pseudo
-          </div>
-        ) : item.category === "badge" ? (
-          <div className="mt-2">
-            <span className={item.badgeClass || "text-white/70"}>{item.name}</span>
-          </div>
-        ) : (
-          <div className={cx("mt-2 text-xs font-black tracking-[0.22em] uppercase", item.previewClass || "text-white/70")}>
-            {item.titleText || item.name}
-          </div>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <div className="text-sm font-black text-white/70">
-          {isMaster ? "Réservé Maître" : `${item.price} crédits`}
-        </div>
-
-        <div className="flex gap-2">
-          {active ? (
-            <button
-              onClick={onDeactivate}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm font-black text-white/85 hover:bg-white/15"
-            >
-              <X className="h-4 w-4" />
-              Désactiver
-            </button>
-          ) : (
-            <button
-              onClick={onActivate}
-              disabled={!canUse || (!isMaster && !owned)}
-              className={cx(
-                "inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-black transition",
-                !canUse
-                  ? "border border-white/10 bg-white/5 text-white/45 cursor-not-allowed"
-                  : (!isMaster && !owned)
-                  ? "border border-white/10 bg-white/5 text-white/45 cursor-not-allowed"
-                  : "bg-gradient-to-r from-rose-600 via-pink-500 to-amber-300 text-black hover:opacity-95"
-              )}
-            >
-              <Wand2 className="h-4 w-4" />
-              Activer
-            </button>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function iconForTab(t: Tab) {
-  if (t === "name_fx") return <Sparkles className="h-4 w-4" />;
-  if (t === "badge") return <Gem className="h-4 w-4" />;
-  if (t === "title") return <Zap className="h-4 w-4" />;
-  if (t === "vip_plan") return <Crown className="h-4 w-4" />;
-  return <Wand2 className="h-4 w-4" />;
 }

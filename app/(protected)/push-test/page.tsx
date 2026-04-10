@@ -4,15 +4,16 @@ import { useEffect, useState } from "react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import { registerPush, sendPush } from "@/lib/push";
 
-const supabase = requireSupabaseBrowserClient();
-
 const VAPID_PUBLIC_KEY =
   "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
+
+const BUILD_MARK = "push-debug-v1";
 
 export default function PushTestPage() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
+  const [clicks, setClicks] = useState(0);
   const [result, setResult] = useState<string>("Vérification de la session...");
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export default function PushTestPage() {
 
     async function checkSession() {
       try {
+        const supabase = requireSupabaseBrowserClient();
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -31,19 +33,28 @@ export default function PushTestPage() {
           setResult(
             `Session active ✅
 
+build: ${BUILD_MARK}
 user_id: ${session.user.id}
 email: ${session.user.email ?? "inconnu"}`
           );
         } else {
           setReady(false);
           setResult(
-            "Session absente. Reconnecte-toi sur ce même domaine puis recharge la page."
+            `Session absente.
+
+build: ${BUILD_MARK}
+
+Reconnecte-toi sur ce même domaine puis recharge la page.`
           );
         }
       } catch (error) {
         if (!cancelled) {
           setReady(false);
-          setResult("Impossible de vérifier la session Supabase.");
+          setResult(
+            `Impossible de vérifier la session Supabase.
+
+build: ${BUILD_MARK}`
+          );
         }
       } finally {
         if (!cancelled) {
@@ -54,29 +65,37 @@ email: ${session.user.email ?? "inconnu"}`
 
     checkSession();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async () => {
-      await checkSession();
-    });
-
     return () => {
       cancelled = true;
-      subscription.unsubscribe();
     };
   }, []);
 
   async function handlePushTest() {
+    const nextClicks = clicks + 1;
+    setClicks(nextClicks);
+
     try {
       setLoading(true);
-      setResult("Création d'une nouvelle subscription...");
+      setResult(
+        `Clic détecté ✅
+
+build: ${BUILD_MARK}
+clicks: ${nextClicks}
+
+Création d'une nouvelle subscription...`
+      );
 
       const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
       setResult(
-        "Nouvelle subscription créée :\n\n" +
-          JSON.stringify(subscription, null, 2) +
-          "\n\nEnvoi sécurisé en cours..."
+        `Subscription créée ✅
+
+build: ${BUILD_MARK}
+clicks: ${nextClicks}
+
+${JSON.stringify(subscription, null, 2)}
+
+Envoi sécurisé en cours...`
       );
 
       const response = await sendPush(subscription, {
@@ -86,12 +105,26 @@ email: ${session.user.email ?? "inconnu"}`
         tag: "ethercristal-test-secure",
       });
 
-      setResult(`Succès ✅\n\n${JSON.stringify(response, null, 2)}`);
+      setResult(
+        `Succès ✅
+
+build: ${BUILD_MARK}
+clicks: ${nextClicks}
+
+${JSON.stringify(response, null, 2)}`
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erreur inconnue";
 
-      setResult(`Erreur ❌\n\n${message}`);
+      setResult(
+        `Erreur ❌
+
+build: ${BUILD_MARK}
+clicks: ${nextClicks}
+
+${message}`
+      );
     } finally {
       setLoading(false);
     }
@@ -103,9 +136,11 @@ email: ${session.user.email ?? "inconnu"}`
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-white">Test Push sécurisé</h1>
           <p className="mt-2 text-sm text-white/70">
-            Cette page vérifie d’abord la session Supabase, puis recrée une subscription
-            propre et appelle la fonction <span className="mx-1 font-semibold text-white">send-push</span>.
+            Cette page vérifie la session Supabase, recrée une subscription
+            propre et appelle la fonction
+            <span className="mx-1 font-semibold text-white">send-push</span>.
           </p>
+          <p className="mt-2 text-xs text-white/45">{BUILD_MARK}</p>
         </div>
 
         <button

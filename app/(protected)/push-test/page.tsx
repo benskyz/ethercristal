@@ -4,31 +4,36 @@ import { useState } from "react";
 import { registerPush, sendPush } from "@/lib/push";
 
 const VAPID_PUBLIC_KEY =
-  "BMR5tUZr4xwpYAc0PdusjEGWpUlW2QbM_kSRoIs2Ven4HDCa0jx_y5ZgowpHugQ-gopk0sJXovVKhPujeiylYuY";
+  "BM7Z2rKq4JjJ8B2IYJ4xQKX8m9c3Q6f4s9v2l0f4Qm3sNQmR9vL2QdP0VJzj4jJk2fVxgYQxkK8m2m0rWn8V2dU";
 
 export default function PushTestPage() {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState("");
+  const [result, setResult] = useState<string>(
+    "Aucun résultat pour le moment."
+  );
 
   async function handlePushTest() {
     try {
       setLoading(true);
-      setResult("Préparation...");
+      setResult("Préparation du test push...");
 
       const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
-      const data = await sendPush(subscription, {
+      setResult("Subscription créée. Envoi de la notification...");
+
+      const response = await sendPush(subscription, {
         title: "Test EtherCristal",
         body: "Le système de notifications push fonctionne.",
         url: "/dashboard",
         tag: "ethercristal-test",
       });
 
-      setResult(JSON.stringify(data, null, 2));
+      setResult(`Succès ✅\n\n${JSON.stringify(response, null, 2)}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erreur inconnue";
-      setResult(message);
+
+      setResult(`Erreur ❌\n\n${message}`);
     } finally {
       setLoading(false);
     }
@@ -36,24 +41,28 @@ export default function PushTestPage() {
 
   return (
     <main className="min-h-screen bg-black px-6 py-10 text-white">
-      <div className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
-        <h1 className="mb-3 text-2xl font-bold">Test Push</h1>
+      <div className="mx-auto max-w-2xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-white">Test Push</h1>
+          <p className="mt-2 text-sm text-white/70">
+            Cette page supprime les anciens service workers, enregistre le
+            nouveau, crée une subscription push et appelle la fonction
+            <span className="mx-1 font-semibold text-white">send-push</span>.
+          </p>
+        </div>
 
-        <p className="mb-6 text-sm text-white/70">
-          Cette page supprime les anciens service workers, enregistre le nouveau,
-          crée une subscription push et appelle la fonction send-push.
-        </p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={handlePushTest}
+            disabled={loading}
+            className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Envoi..." : "Tester les notifications push"}
+          </button>
+        </div>
 
-        <button
-          onClick={handlePushTest}
-          disabled={loading}
-          className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:opacity-50"
-        >
-          {loading ? "Envoi..." : "Tester les notifications push"}
-        </button>
-
-        <pre className="mt-6 overflow-x-auto rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-green-300 whitespace-pre-wrap">
-          {result || "Aucun résultat pour le moment."}
+        <pre className="mt-6 whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-green-300">
+          {result}
         </pre>
       </div>
     </main>

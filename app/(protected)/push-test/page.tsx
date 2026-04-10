@@ -1,14 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
 import { registerPush, sendPush } from "@/lib/push";
+
+const supabase = requireSupabaseBrowserClient();
 
 const VAPID_PUBLIC_KEY =
   "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
 
 export default function PushTestPage() {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string>("Aucun résultat pour le moment.");
+  const [checking, setChecking] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [result, setResult] = useState<string>("Vérification de la session...");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkSession() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (cancelled) return;
+
+        if (session?.access_token) {
+          setReady(true);
+          setResult(
+            `Session active ✅
+
+user_id: ${session.user.id}
+email: ${session.user.email ?? "inconnu"}`
+          );
+        } else {
+          setReady(false);
+          setResult(
+            "Session absente. Reconnecte-toi sur ce même domaine puis recharge la page."
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setReady(false);
+          setResult("Impossible de vérifier la session Supabase.");
+        }
+      } finally {
+        if (!cancelled) {
+          setChecking(false);
+        }
+      }
+    }
+
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async () => {
+      await checkSession();
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   async function handlePushTest() {
     try {
@@ -47,15 +103,14 @@ export default function PushTestPage() {
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-white">Test Push sécurisé</h1>
           <p className="mt-2 text-sm text-white/70">
-            Cette page recrée une subscription propre et appelle la fonction
-            <span className="mx-1 font-semibold text-white">send-push</span>
-            avec le token de session Supabase.
+            Cette page vérifie d’abord la session Supabase, puis recrée une subscription
+            propre et appelle la fonction <span className="mx-1 font-semibold text-white">send-push</span>.
           </p>
         </div>
 
         <button
           onClick={handlePushTest}
-          disabled={loading}
+          disabled={loading || checking || !ready}
           className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? "Envoi..." : "Tester les notifications push"}

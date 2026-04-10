@@ -1,7 +1,5 @@
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
-const supabase = requireSupabaseBrowserClient();
-
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -16,6 +14,10 @@ export function urlBase64ToUint8Array(base64String: string) {
 }
 
 export async function registerPush(vapidPublicKey: string) {
+  if (typeof window === "undefined") {
+    throw new Error("Fonction disponible uniquement dans le navigateur.");
+  }
+
   if (!("serviceWorker" in navigator)) {
     throw new Error("Service Worker non supporté.");
   }
@@ -68,6 +70,12 @@ export async function sendPush(
   subscription: Record<string, unknown>,
   payload: PushPayload
 ) {
+  if (typeof window === "undefined") {
+    throw new Error("Fonction disponible uniquement dans le navigateur.");
+  }
+
+  const supabase = requireSupabaseBrowserClient();
+
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -106,7 +114,9 @@ export async function sendPush(
   } catch {}
 
   if (!response.ok) {
-    throw new Error(typeof data === "string" ? data : JSON.stringify(data, null, 2));
+    throw new Error(
+      typeof data === "string" ? data : JSON.stringify(data, null, 2)
+    );
   }
 
   return data;

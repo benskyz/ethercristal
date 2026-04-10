@@ -1,27 +1,47 @@
-self.addEventListener("install", () => {
-  console.log("SW installed");
-});
+,export function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
 
-self.addEventListener("activate", () => {
-  console.log("SW activated");
-});
-
-self.addEventListener("push", (event) => {
-  let data = {};
-
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch (e) {
-    data = {};
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
   }
 
-  event.waitUntil(
-    self.registration.showNotification(data.title || "Notification", {
-      body: data.body || "Push reçu.",
-    })
-  );
-});
+  return outputArray;
+}
 
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-});
+export async function registerPush(vapidPublicKey: string) {
+  if (typeof window === "undefined") {
+    throw new Error("Fenêtre non disponible.");
+  }
+
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Service Worker non supporté.");
+  }
+
+  if (!("PushManager" in window)) {
+    throw new Error("Push non supporté.");
+  }
+
+  const permission = await Notification.requestPermission();
+
+  if (permission !== "granted") {
+    throw new Error("Permission notification refusée.");
+  }
+
+  const registration = await navigator.serviceWorker.register("/sw.js?v=3", {
+    scope: "/",
+  });
+
+  let subscription = await registration.pushManager.getSubscription();
+
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+    });
+  }
+
+  return subscription.toJSON();
+}

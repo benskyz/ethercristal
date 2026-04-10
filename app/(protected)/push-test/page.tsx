@@ -2,26 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import { registerPush, sendPush } from "@/lib/push";
-
-const VAPID_PUBLIC_KEY =
-  "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
-
-function decodeJwtPayload(token: string) {
-  try {
-    const payload = token.split(".")[1];
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(base64));
-  } catch {
-    return null;
-  }
-}
+import { savePushSubscription, removePushSubscription } from "@/lib/push";
 
 export default function PushTestPage() {
-  const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [ready, setReady] = useState(false);
-  const [result, setResult] = useState<string>("Vérification de la session...");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState("Vérification de la session...");
 
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +16,6 @@ export default function PushTestPage() {
     async function checkSession() {
       try {
         const supabase = requireSupabaseBrowserClient();
-
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -37,24 +23,20 @@ export default function PushTestPage() {
         if (cancelled) return;
 
         if (session?.access_token) {
-          const payload = decodeJwtPayload(session.access_token);
-
           setReady(true);
           setResult(
             `Session active ✅
 
 user_id: ${session.user.id}
 email: ${session.user.email ?? "inconnu"}
-token_ref: ${payload?.ref ?? "introuvable"}
-token_role: ${payload?.role ?? "introuvable"}`
+
+Tu peux maintenant enregistrer ou supprimer la subscription push.`
           );
         } else {
           setReady(false);
-          setResult(
-            "Session absente. Reconnecte-toi sur ce même domaine puis recharge la page."
-          );
+          setResult("Session absente. Reconnecte-toi sur ce même domaine.");
         }
-      } catch (error) {
+      } catch {
         if (!cancelled) {
           setReady(false);
           setResult("Impossible de vérifier la session Supabase.");
@@ -73,32 +55,43 @@ token_role: ${payload?.role ?? "introuvable"}`
     };
   }, []);
 
-  async function handlePushTest() {
+  async function handleEnable() {
     try {
       setLoading(true);
-      setResult("Création d'une nouvelle subscription...");
+      setResult("Enregistrement de la subscription push...");
 
-      const subscription = await registerPush(VAPID_PUBLIC_KEY);
+      const subscription = await savePushSubscription();
 
       setResult(
-        "Nouvelle subscription créée :\n\n" +
-          JSON.stringify(subscription, null, 2) +
-          "\n\nEnvoi sécurisé en cours..."
+        `Subscription enregistrée ✅
+
+${JSON.stringify(subscription, null, 2)}`
       );
-
-      const response = await sendPush(subscription, {
-        title: "Test EtherCristal",
-        body: "Le système de notifications push sécurisé fonctionne.",
-        url: "/dashboard",
-        tag: "ethercristal-test-secure",
-      });
-
-      setResult(`Succès ✅\n\n${JSON.stringify(response, null, 2)}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erreur inconnue";
+      setResult(`Erreur ❌
 
-      setResult(`Erreur ❌\n\n${message}`);
+${message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDisable() {
+    try {
+      setLoading(true);
+      setResult("Suppression de la subscription push...");
+
+      await removePushSubscription();
+
+      setResult("Subscription supprimée ✅");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Erreur inconnue";
+      setResult(`Erreur ❌
+
+${message}`);
     } finally {
       setLoading(false);
     }
@@ -107,25 +100,31 @@ token_role: ${payload?.role ?? "introuvable"}`
   return (
     <main className="min-h-screen bg-black px-6 py-10 text-white">
       <div className="mx-auto max-w-2xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Test Push sécurisé</h1>
-          <p className="mt-2 text-sm text-white/70">
-            Cette page vérifie la session Supabase, recrée une subscription
-            propre et appelle la fonction
-            <span className="mx-1 font-semibold text-white">send-push</span>.
-          </p>
+        <h1 className="text-2xl font-bold text-white">Gestion Push</h1>
+        <p className="mt-2 text-sm text-white/70">
+          Cette page sert à enregistrer ou supprimer la subscription push du navigateur.
+        </p>
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button
+            onClick={handleEnable}
+            disabled={loading || checking || !ready}
+            className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? "Chargement..." : "Enregistrer ma subscription"}
+          </button>
+
+          <button
+            onClick={handleDisable}
+            disabled={loading || checking || !ready}
+            className="rounded-2xl border border-white/15 px-5 py-3 font-semibold text-white transition hover:bg-white/10 disabled:opacity-50"
+          >
+            Supprimer ma subscription
+          </button>
         </div>
 
-        <button
-          onClick={handlePushTest}
-          disabled={loading || checking || !ready}
-          className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading ? "Envoi..." : "Tester les notifications push"}
-        </button>
-
         <pre className="mt-6 whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-green-300">
-          {result}
+          {checking ? "Vérification de la session..." : result}
         </pre>
       </div>
     </main>

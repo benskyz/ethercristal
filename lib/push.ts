@@ -13,7 +13,6 @@ export function urlBase64ToUint8Array(base64String: string) {
 
 export async function resetOldServiceWorkers() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-
   const registrations = await navigator.serviceWorker.getRegistrations();
   await Promise.all(registrations.map((reg) => reg.unregister()));
 }
@@ -34,25 +33,28 @@ export async function registerPush(vapidPublicKey: string) {
   await resetOldServiceWorkers();
 
   const permission = await Notification.requestPermission();
-
   if (permission !== "granted") {
     throw new Error("Permission notification refusée.");
   }
 
-  const registration = await navigator.serviceWorker.register("/sw.js?v=20", {
+  const registration = await navigator.serviceWorker.register("/sw.js?v=50", {
     scope: "/",
   });
 
   await navigator.serviceWorker.ready;
 
-  let subscription = await registration.pushManager.getSubscription();
+  const existingSubscription = await registration.pushManager.getSubscription();
 
-  if (!subscription) {
-    subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-    });
+  if (existingSubscription) {
+    try {
+      await existingSubscription.unsubscribe();
+    } catch {}
   }
+
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+  });
 
   return subscription;
 }

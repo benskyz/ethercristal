@@ -1,8 +1,4 @@
-import dynamic from "next/dynamic";
-
-const PushSettings = dynamic(() => import("./push-settings"), {
-  ssr: false,
-});
+import PushSettings from "./push-settings";
 
 export default function OptionsPage() {
   return (

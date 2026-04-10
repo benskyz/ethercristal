@@ -11,52 +11,45 @@ export function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function resetOldServiceWorkers() {
-  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-  const registrations = await navigator.serviceWorker.getRegistrations();
-  await Promise.all(registrations.map((reg) => reg.unregister()));
-}
-
 export async function registerPush(vapidPublicKey: string) {
-  if (typeof window === "undefined") {
-    throw new Error("Fenêtre non disponible.");
-  }
-
   if (!("serviceWorker" in navigator)) {
-    throw new Error("Service Worker non supporté sur cet appareil.");
+    throw new Error("Service Worker non supporté.");
   }
 
   if (!("PushManager" in window)) {
-    throw new Error("Push non supporté sur cet appareil.");
+    throw new Error("Push non supporté.");
   }
 
-  await resetOldServiceWorkers();
+  const regs = await navigator.serviceWorker.getRegistrations();
+
+  for (const reg of regs) {
+    try {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) await sub.unsubscribe();
+    } catch {}
+
+    try {
+      await reg.unregister();
+    } catch {}
+  }
 
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
     throw new Error("Permission notification refusée.");
   }
 
-  const registration = await navigator.serviceWorker.register("/sw.js?v=50", {
+  const registration = await navigator.serviceWorker.register("/sw.js?v=100", {
     scope: "/",
   });
 
   await navigator.serviceWorker.ready;
-
-  const existingSubscription = await registration.pushManager.getSubscription();
-
-  if (existingSubscription) {
-    try {
-      await existingSubscription.unsubscribe();
-    } catch {}
-  }
 
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
   });
 
-  return subscription;
+  return subscription.toJSON();
 }
 
 type PushPayload = {
@@ -68,16 +61,14 @@ type PushPayload = {
 };
 
 export async function sendPush(
-  subscription: PushSubscription | Record<string, unknown>,
+  subscription: Record<string, unknown>,
   payload: PushPayload
 ) {
   const response = await fetch(
     "https://czmhgljqtumnbnmeiuzb.supabase.co/functions/v1/send-push",
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subscription,
         title: payload.title,
@@ -100,9 +91,7 @@ export async function sendPush(
   } catch {}
 
   if (!response.ok) {
-    throw new Error(
-      typeof data === "string" ? data : JSON.stringify(data, null, 2)
-    );
+    throw new Error(typeof data === "string" ? data : JSON.stringify(data, null, 2));
   }
 
   return data;

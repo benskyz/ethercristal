@@ -8,18 +8,20 @@ const VAPID_PUBLIC_KEY =
 
 export default function PushTestPage() {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string>(
-    "Aucun résultat pour le moment."
-  );
+  const [result, setResult] = useState<string>("Aucun résultat pour le moment.");
 
   async function handlePushTest() {
     try {
       setLoading(true);
-      setResult("Préparation du test push...");
+      setResult("Création d'une nouvelle subscription...");
 
       const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
-      setResult("Subscription créée. Envoi de la notification...");
+      setResult(
+        "Nouvelle subscription créée :\n\n" +
+          JSON.stringify(subscription, null, 2) +
+          "\n\nEnvoi en cours..."
+      );
 
       const response = await sendPush(subscription, {
         title: "Test EtherCristal",
@@ -45,21 +47,18 @@ export default function PushTestPage() {
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-white">Test Push</h1>
           <p className="mt-2 text-sm text-white/70">
-            Cette page supprime les anciens service workers, enregistre le
-            nouveau, crée une subscription push et appelle la fonction
+            Cette page recrée une subscription propre et appelle la fonction
             <span className="mx-1 font-semibold text-white">send-push</span>.
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={handlePushTest}
-            disabled={loading}
-            className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? "Envoi..." : "Tester les notifications push"}
-          </button>
-        </div>
+        <button
+          onClick={handlePushTest}
+          disabled={loading}
+          className="rounded-2xl bg-white px-5 py-3 font-semibold text-black transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? "Envoi..." : "Tester les notifications push"}
+        </button>
 
         <pre className="mt-6 whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/40 p-4 text-xs text-green-300">
           {result}

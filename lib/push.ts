@@ -1,12 +1,24 @@
 import { requireSupabaseBrowserClient } from "@/lib/supabase";
 
-type PushPayload = {
+export type PushPayload = {
   title: string;
   body: string;
   url?: string;
   tag?: string;
   image?: string;
 };
+
+export type PushSubscriptionJson = {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys?: {
+    p256dh?: string;
+    auth?: string;
+  };
+};
+
+const VAPID_PUBLIC_KEY =
+  "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
 
 export function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -21,7 +33,29 @@ export function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function registerPush(vapidPublicKey: string) {
+export async function clearPushState() {
+  if (typeof window === "undefined") return;
+  if (!("serviceWorker" in navigator)) return;
+
+  const regs = await navigator.serviceWorker.getRegistrations();
+
+  for (const reg of regs) {
+    try {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await sub.unsubscribe();
+      }
+    } catch {}
+
+    try {
+      await reg.unregister();
+    } catch {}
+  }
+}
+
+export async function registerPush(
+  vapidPublicKey: string = VAPID_PUBLIC_KEY
+): Promise<PushSubscriptionJson> {
   if (typeof window === "undefined") {
     throw new Error("Fonction disponible uniquement dans le navigateur.");
   }
@@ -34,25 +68,14 @@ export async function registerPush(vapidPublicKey: string) {
     throw new Error("Push non supporté.");
   }
 
-  const regs = await navigator.serviceWorker.getRegistrations();
-
-  for (const reg of regs) {
-    try {
-      const sub = await reg.pushManager.getSubscription();
-      if (sub) await sub.unsubscribe();
-    } catch {}
-
-    try {
-      await reg.unregister();
-    } catch {}
-  }
+  await clearPushState();
 
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
     throw new Error("Permission notification refusée.");
   }
 
-  const registration = await navigator.serviceWorker.register("/sw.js?v=102", {
+  const registration = await navigator.serviceWorker.register("/sw.js?v=103", {
     scope: "/",
   });
 
@@ -63,7 +86,13 @@ export async function registerPush(vapidPublicKey: string) {
     applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
   });
 
-  return subscription.toJSON();
+  const json = subscription.toJSON() as PushSubscriptionJson;
+
+  if (!json?.endpoint || !json?.keys?.p256dh || !json?.keys?.auth) {
+    throw new Error("Subscription push incomplète.");
+  }
+
+  return json;
 }
 
 export async function sendPush(
@@ -99,13 +128,36 @@ export async function sendPush(
   });
 
   if (error) {
-    throw new Error(JSON.stringify(error, null, 2));
+    try {
+      const response = (error as { context?: Response }).context;
+
+      if (response) {
+        const text = await response.text();
+
+        try {
+          const json = JSON.parse(text);
+          throw new Error(JSON.stringify(json, null, 2));
+        } catch {
+          throw new Error(text || error.message || "FunctionsHttpError");
+        }
+      }
+    } catch (inner) {
+      if (inner instanceof Error) {
+        throw inner;
+      }
+    }
+
+    throw new Error(error.message || JSON.stringify(error, null, 2));
   }
 
   return data;
 }
 
 export async function savePushSubscription() {
+  if (typeof window === "undefined") {
+    throw new Error("Fonction disponible uniquement dans le navigateur.");
+  }
+
   const supabase = requireSupabaseBrowserClient();
 
   const {
@@ -116,13 +168,13 @@ export async function savePushSubscription() {
     throw new Error("Utilisateur non connecté.");
   }
 
-  const VAPID_PUBLIC_KEY =
-    "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
-
   const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
-  const endpoint = subscription.endpoint as string;
-  const keys = (subscription.keys || {}) as { p256dh?: string; auth?: string };
+  const { endpoint, keys } = subscription;
+
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    throw new Error("Subscription push invalide.");
+  }
 
   const { error } = await supabase.from("push_subscriptions").upsert(
     {
@@ -130,17 +182,24 @@ export async function savePushSubscription() {
       endpoint,
       p256dh: keys.p256dh,
       auth: keys.auth,
-      user_agent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+      user_agent:
+        typeof navigator !== "undefined" ? navigator.userAgent : null,
     },
     { onConflict: "endpoint" }
   );
 
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
   return subscription;
 }
 
 export async function removePushSubscription() {
+  if (typeof window === "undefined") {
+    throw new Error("Fonction disponible uniquement dans le navigateur.");
+  }
+
   const supabase = requireSupabaseBrowserClient();
 
   const {
@@ -149,6 +208,10 @@ export async function removePushSubscription() {
 
   if (!user) {
     throw new Error("Utilisateur non connecté.");
+  }
+
+  if (!("serviceWorker" in navigator)) {
+    return;
   }
 
   const regs = await navigator.serviceWorker.getRegistrations();
@@ -158,11 +221,15 @@ export async function removePushSubscription() {
       const sub = await reg.pushManager.getSubscription();
 
       if (sub?.endpoint) {
-        await supabase
+        const { error } = await supabase
           .from("push_subscriptions")
           .delete()
           .eq("user_id", user.id)
           .eq("endpoint", sub.endpoint);
+
+        if (error) {
+          throw error;
+        }
 
         await sub.unsubscribe();
       }

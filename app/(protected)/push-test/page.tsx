@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { registerPush } from "@/lib/push";
+import { registerPush, sendPush } from "@/lib/push";
 
 const VAPID_PUBLIC_KEY =
   "BMR5tUZr4xwpYAc0PdusjEGWpUlW2QbM_kSRoIs2Ven4HDCa0jx_y5ZgowpHugQ-gopk0sJXovVKhPujeiylYuY";
@@ -13,36 +13,18 @@ export default function PushTestPage() {
   async function handlePushTest() {
     try {
       setLoading(true);
-      setResult("Préparation du test...");
+      setResult("Préparation...");
 
       const subscription = await registerPush(VAPID_PUBLIC_KEY);
 
-      const res = await fetch(
-        "https://czmhgljqtumnbnmeiuzb.supabase.co/functions/v1/send-push",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            subscription,
-            title: "Test EtherCristal",
-            body: "Ta notification push fonctionne.",
-            url: "/dashboard",
-            icon: "/favicon.ico",
-            badge: "/favicon.ico",
-          }),
-        }
-      );
+      const data = await sendPush(subscription, {
+        title: "Test EtherCristal",
+        body: "Le système de notifications push fonctionne.",
+        url: "/dashboard",
+        tag: "ethercristal-test",
+      });
 
-      const text = await res.text();
-
-      try {
-        const json = JSON.parse(text);
-        setResult(JSON.stringify(json, null, 2));
-      } catch {
-        setResult(text);
-      }
+      setResult(JSON.stringify(data, null, 2));
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erreur inconnue";
@@ -56,9 +38,10 @@ export default function PushTestPage() {
     <main className="min-h-screen bg-black px-6 py-10 text-white">
       <div className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
         <h1 className="mb-3 text-2xl font-bold">Test Push</h1>
+
         <p className="mb-6 text-sm text-white/70">
-          Cette page réinitialise les anciens service workers, enregistre le nouveau,
-          demande la permission et envoie une notification de test.
+          Cette page supprime les anciens service workers, enregistre le nouveau,
+          crée une subscription push et appelle la fonction send-push.
         </p>
 
         <button

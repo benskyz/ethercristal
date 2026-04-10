@@ -13,6 +13,7 @@ export function urlBase64ToUint8Array(base64String: string) {
 
 export async function resetOldServiceWorkers() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
   const registrations = await navigator.serviceWorker.getRegistrations();
   await Promise.all(registrations.map((reg) => reg.unregister()));
 }
@@ -23,21 +24,22 @@ export async function registerPush(vapidPublicKey: string) {
   }
 
   if (!("serviceWorker" in navigator)) {
-    throw new Error("Service Worker non supporté.");
+    throw new Error("Service Worker non supporté sur cet appareil.");
   }
 
   if (!("PushManager" in window)) {
-    throw new Error("Push non supporté.");
+    throw new Error("Push non supporté sur cet appareil.");
   }
 
   await resetOldServiceWorkers();
 
   const permission = await Notification.requestPermission();
+
   if (permission !== "granted") {
     throw new Error("Permission notification refusée.");
   }
 
-  const registration = await navigator.serviceWorker.register("/sw.js?v=12", {
+  const registration = await navigator.serviceWorker.register("/sw.js?v=20", {
     scope: "/",
   });
 
@@ -67,7 +69,7 @@ export async function sendPush(
   subscription: PushSubscription | Record<string, unknown>,
   payload: PushPayload
 ) {
-  const res = await fetch(
+  const response = await fetch(
     "https://czmhgljqtumnbnmeiuzb.supabase.co/functions/v1/send-push",
     {
       method: "POST",
@@ -78,8 +80,8 @@ export async function sendPush(
         subscription,
         title: payload.title,
         body: payload.body,
-        icon: "/icons/icon-192.png",
-        badge: "/icons/badge-72.png",
+        icon: "/favicon.ico",
+        badge: "/favicon.ico",
         tag: payload.tag || "ethercristal",
         url: payload.url || "/dashboard",
         image: payload.image,
@@ -88,14 +90,14 @@ export async function sendPush(
     }
   );
 
-  const text = await res.text();
+  const text = await response.text();
 
   let data: unknown = text;
   try {
     data = JSON.parse(text);
   } catch {}
 
-  if (!res.ok) {
+  if (!response.ok) {
     throw new Error(
       typeof data === "string" ? data : JSON.stringify(data, null, 2)
     );

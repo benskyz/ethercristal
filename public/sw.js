@@ -18,10 +18,10 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "EtherCristal", {
       body: data.body || "",
-      icon: data.icon || "/icons/icon-192.png",
-      badge: data.badge || "/icons/badge-72.png",
+      icon: data.icon || "/favicon.ico",
+      badge: data.badge || "/favicon.ico",
       image: data.image,
-      tag: data.tag || "default",
+      tag: data.tag || "ethercristal",
       renotify: true,
       vibrate: data.vibrate || [200, 100, 200],
       requireInteraction: false,
@@ -35,21 +35,21 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  const url = event.notification.data?.url || "/dashboard";
+  const targetUrl = event.notification?.data?.url || "/dashboard";
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if ("focus" in client) {
           try {
-            client.navigate(url);
+            client.navigate(targetUrl);
           } catch {}
           return client.focus();
         }
       }
 
       if (clients.openWindow) {
-        return clients.openWindow(url);
+        return clients.openWindow(targetUrl);
       }
     })
   );

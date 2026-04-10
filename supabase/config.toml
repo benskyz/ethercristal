@@ -1,5 +1,4 @@
-[functions.create-payment-session]
-verify_jwt = true
+project_id = "czmhgljqtumnbnmeiuzb"
 
-[functions.payment-webhook]
+[functions.send-push]
 verify_jwt = false

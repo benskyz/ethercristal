@@ -4,7 +4,7 @@ import { useState } from "react";
 import { registerPush, sendPush } from "@/lib/push";
 
 const VAPID_PUBLIC_KEY =
-  "BM7Z2rKq4JjJ8B2IYJ4xQKX8m9c3Q6f4s9v2l0f4Qm3sNQmR9vL2QdP0VJzj4jJk2fVxgYQxkK8m2m0rWn8V2dU";
+  "BBVgfYkDoBBWrhRwz34WFKtITr7Fxl93zhcO5UOvZjwIiLcYY1SGiMr40or6o_0ceofyggw6alzLOuRVuV4ZZTQ";
 
 export default function PushTestPage() {
   const [loading, setLoading] = useState(false);

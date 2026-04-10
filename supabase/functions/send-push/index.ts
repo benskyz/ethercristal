@@ -17,18 +17,11 @@ type RequestBody = {
   badge?: string;
   image?: string;
   url?: string;
+  tag?: string;
+  vibrate?: number[];
   data?: Record<string, unknown>;
   ttl?: number;
 };
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-}
 
 function corsHeaders(origin: string | null) {
   return {
@@ -37,6 +30,7 @@ function corsHeaders(origin: string | null) {
       "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
+    "Content-Type": "application/json",
   };
 }
 
@@ -45,21 +39,13 @@ serve(async (req) => {
   const cors = corsHeaders(origin);
 
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: cors,
-    });
+    return new Response("ok", { headers: cors });
   }
 
   if (req.method !== "POST") {
     return new Response(
       JSON.stringify({ error: "Method not allowed. Use POST." }),
-      {
-        status: 405,
-        headers: {
-          ...cors,
-          "Content-Type": "application/json",
-        },
-      },
+      { status: 405, headers: cors }
     );
   }
 
@@ -71,90 +57,69 @@ serve(async (req) => {
     if (!vapidSubject || !vapidPublicKey || !vapidPrivateKey) {
       return new Response(
         JSON.stringify({
+          ok: false,
           error:
             "Missing VAPID secrets. Required: VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY",
         }),
-        {
-          status: 500,
-          headers: {
-            ...cors,
-            "Content-Type": "application/json",
-          },
-        },
+        { status: 500, headers: cors }
       );
     }
 
-    webpush.setVapidDetails(
-      vapidSubject,
-      vapidPublicKey,
-      vapidPrivateKey,
-    );
+    webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
     const body = (await req.json()) as RequestBody;
 
     if (!body?.subscription?.endpoint) {
       return new Response(
         JSON.stringify({
+          ok: false,
           error: "Missing subscription.endpoint",
         }),
-        {
-          status: 400,
-          headers: {
-            ...cors,
-            "Content-Type": "application/json",
-          },
-        },
+        { status: 400, headers: cors }
       );
     }
 
     const payload = JSON.stringify({
       title: body.title ?? "Nouvelle notification",
       body: body.body ?? "Tu as reçu une nouvelle alerte.",
-      icon: body.icon ?? "/icons/icon-192.png",
-      badge: body.badge ?? "/icons/badge-72.png",
+      icon: body.icon ?? "/favicon.ico",
+      badge: body.badge ?? "/favicon.ico",
       image: body.image ?? undefined,
+      tag: body.tag ?? "ethercristal",
+      vibrate: body.vibrate ?? [200, 100, 200],
       url: body.url ?? "/dashboard",
       data: body.data ?? {},
     });
 
     const ttl = Number.isFinite(body.ttl) ? Number(body.ttl) : 60;
 
-    await webpush.sendNotification(body.subscription as webpush.PushSubscription, payload, {
-      TTL: ttl,
-      urgency: "high",
-    });
+    await webpush.sendNotification(
+      body.subscription as webpush.PushSubscription,
+      payload,
+      {
+        TTL: ttl,
+        urgency: "high",
+      }
+    );
 
     return new Response(
       JSON.stringify({
         ok: true,
         message: "Push sent successfully",
       }),
-      {
-        status: 200,
-        headers: {
-          ...cors,
-          "Content-Type": "application/json",
-        },
-      },
+      { status: 200, headers: cors }
     );
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown error";
-
+  } catch (error: any) {
     console.error("send-push error:", error);
 
     return new Response(
       JSON.stringify({
         ok: false,
-        error: message,
+        error: error?.message ?? "Unknown error",
+        statusCode: error?.statusCode ?? null,
+        body: error?.body ?? null,
       }),
-      {
-        status: 500,
-        headers: {
-          ...cors,
-          "Content-Type": "application/json",
-        },
-      },
+      { status: 500, headers: cors }
     );
   }
 });

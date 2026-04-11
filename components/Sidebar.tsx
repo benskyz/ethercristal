@@ -1,233 +1,86 @@
-"use client";
+'use client'
 
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import {
-  Crown,
-  Flame,
-  LayoutDashboard,
-  LogOut,
-  MenuSquare,
-  MessageSquare,
-  Settings,
-  Shield,
-  ShoppingBag,
-  Sparkles,
-  Users,
-  Wand2,
-  X,
-} from "lucide-react";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import { getProfileByUserId, profileDisplayName, type ProfileRow } from "@/lib/profileCompat";
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 
-type SidebarProps = {
-  open?: boolean;
-  onClose?: () => void;
-};
-
-type NavItem = {
-  href: string;
-  label: string;
-  icon: React.ReactNode;
-  adminOnly?: boolean;
-};
-
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
-
-export default function Sidebar({ open = false, onClose }: SidebarProps) {
-  const pathname = usePathname();
-  const router = useRouter();
-
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadSidebar() {
-      try {
-        const supabase = requireSupabaseBrowserClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!mounted) return;
-
-        if (!user) {
-          setProfile(null);
-          setLoading(false);
-          return;
-        }
-
-        const row = await getProfileByUserId(user.id);
-
-        if (!mounted) return;
-        setProfile(row);
-      } catch {
-        if (mounted) {
-          setProfile(null);
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadSidebar();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const navItems = useMemo<NavItem[]>(
-    () => [
-      { href: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
-      { href: "/desir", label: "Désir", icon: <Flame className="h-4 w-4" /> },
-      { href: "/salons", label: "Salons", icon: <Users className="h-4 w-4" /> },
-      { href: "/messages", label: "Messages", icon: <MessageSquare className="h-4 w-4" /> },
-      { href: "/boutique", label: "Boutique", icon: <ShoppingBag className="h-4 w-4" /> },
-      { href: "/inventaire", label: "Inventaire", icon: <Wand2 className="h-4 w-4" /> },
-      { href: "/vip", label: "VIP", icon: <Crown className="h-4 w-4" /> },
-      { href: "/options", label: "Options", icon: <Settings className="h-4 w-4" /> },
-      { href: "/admin", label: "Admin", icon: <Shield className="h-4 w-4" />, adminOnly: true },
-    ],
-    []
-  );
-
-  async function handleLogout() {
-    try {
-      const supabase = requireSupabaseBrowserClient();
-      await supabase.auth.signOut();
-    } finally {
-      router.replace("/enter");
-    }
-  }
-
-  const visibleItems = navItems.filter((item) => !item.adminOnly || profile?.is_admin);
+const NAV = [
+  { href: '/dashboard', label: 'Dashboard', icon: '◈' },
+  { href: '/salons', label: 'Salons', icon: '◉' },
+  { href: '/messages', label: 'Messages', icon: '✉' },
+  { href: '/boutique', label: 'Boutique', icon: '✦' },
+  { href: '/inventaire', label: 'Inventaire', icon: '⬡' },
+  { href: '/profile', label: 'Profil', icon: '◎' },
+  { href: '/options', label: 'Options', icon: '⚙' },
+  { href: '/vip', label: 'VIP', icon: '♦' },
+]
+export default Sidebar;
+export function Sidebar() {
+  const pathname = usePathname()
 
   return (
-    <>
-      <div
-        className={cx(
-          "fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition lg:hidden",
-          open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
-        )}
-        onClick={onClose}
-      />
-
-      <aside
-        className={cx(
-          "fixed left-0 top-0 z-50 h-screen w-[290px] border-r border-red-500/12 bg-[#09090d]/96 p-4 text-white shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-transform duration-300 lg:translate-x-0",
-          open ? "translate-x-0" : "-translate-x-full"
-        )}
+    <aside className="flex h-screen w-16 shrink-0 flex-col items-center border-r border-white/[0.05] bg-[#08080f] py-5 md:w-56 md:items-start md:px-4 sticky top-0">
+      {/* Logo */}
+      <Link
+        href="/dashboard"
+        className="mb-8 flex items-center gap-2.5 px-1 md:px-0"
+        aria-label="EtherCristal"
       >
-        <div className="flex h-full flex-col">
-          <div className="mb-4 flex items-center justify-between gap-3 lg:justify-start">
-            <div className="flex items-center gap-3">
-              <div className="grid h-12 w-12 place-items-center rounded-[18px] border border-red-500/12 bg-gradient-to-br from-red-700/20 via-black to-fuchsia-700/10">
-                <Sparkles className="h-5 w-5 text-red-100" />
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.24em] text-red-100/34">
-                  EtherCristal
-                </div>
-                <div className="text-lg font-black text-white">Navigation</div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={onClose}
-              className="grid h-10 w-10 place-items-center rounded-[14px] border border-white/10 bg-white/[0.04] text-white/70 lg:hidden"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="mb-4 rounded-[24px] border border-red-500/12 bg-black/20 p-4">
-            {loading ? (
-              <div className="text-sm text-white/45">Chargement du profil...</div>
-            ) : (
-              <>
-                <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
-                  Profil
-                </div>
-                <div className="mt-2 text-lg font-black text-white">
-                  {profileDisplayName(profile)}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-white/75">
-                    crédits {profile?.credits ?? 0}
-                  </span>
-                  {profile?.is_vip ? (
-                    <span className="rounded-full border border-amber-400/18 bg-amber-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-amber-100">
-                      vip
-                    </span>
-                  ) : null}
-                  {profile?.is_admin ? (
-                    <span className="rounded-full border border-red-400/18 bg-red-500/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-red-100">
-                      admin
-                    </span>
-                  ) : null}
-                </div>
-              </>
-            )}
-          </div>
-
-          <nav className="flex-1 space-y-2 overflow-y-auto">
-            {visibleItems.map((item) => {
-              const active =
-                pathname === item.href ||
-                (item.href !== "/dashboard" && pathname.startsWith(item.href));
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={onClose}
-                  className={cx(
-                    "flex items-center gap-3 rounded-[18px] border px-4 py-4 text-sm font-black uppercase tracking-[0.14em] transition",
-                    active
-                      ? "border-red-400/18 bg-red-500/12 text-white"
-                      : "border-white/8 bg-white/[0.03] text-white/62 hover:bg-white/[0.06] hover:text-white"
-                  )}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="mt-4 space-y-2">
-            <button
-              type="button"
-              onClick={() => {
-                onClose?.();
-                router.push("/dashboard");
-              }}
-              className="flex w-full items-center gap-3 rounded-[18px] border border-white/8 bg-white/[0.03] px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-white/70 transition hover:bg-white/[0.06] hover:text-white"
-            >
-              <MenuSquare className="h-4 w-4" />
-              Vue principale
-            </button>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex w-full items-center gap-3 rounded-[18px] border border-red-400/18 bg-red-500/10 px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-red-100 transition hover:bg-red-500/16"
-            >
-              <LogOut className="h-4 w-4" />
-              Déconnexion
-            </button>
-          </div>
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-violet-500/30 bg-violet-950/50 text-base">
+          ⬡
         </div>
-      </aside>
-    </>
-  );
+        <span
+          className="hidden text-base font-black tracking-tight md:block"
+          style={{
+            background: 'linear-gradient(135deg, #fff 30%, #c4b5fd 70%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+          }}
+        >
+          EtherCristal
+        </span>
+      </Link>
+
+      {/* Nav */}
+      <nav className="flex w-full flex-col gap-1">
+        {NAV.map(({ href, label, icon }) => {
+          const active = pathname === href || pathname.startsWith(href + '/')
+          return (
+            <Link
+              key={href}
+              href={href}
+              title={label}
+              className={[
+                'group flex items-center gap-3 rounded-xl px-2 py-2.5 text-sm font-semibold transition-all duration-150 md:px-3',
+                active
+                  ? 'border border-violet-500/25 bg-violet-600/20 text-violet-200 shadow-[0_0_12px_rgba(139,92,246,0.15)]'
+                  : 'border border-transparent text-white/30 hover:bg-white/[0.04] hover:text-white/70',
+              ].join(' ')}
+            >
+              <span className={`shrink-0 text-base transition-all ${active ? 'text-violet-300' : 'text-white/25 group-hover:text-white/50'}`}>
+                {icon}
+              </span>
+              <span className="hidden md:block">{label}</span>
+            </Link>
+          )
+        })}
+      </nav>
+
+      {/* Bottom: logout */}
+      <div className="mt-auto w-full">
+        <button
+          className="flex w-full items-center gap-3 rounded-xl border border-transparent px-2 py-2.5 text-sm font-semibold text-white/20 transition-all duration-150 hover:bg-white/[0.04] hover:text-white/50 md:px-3"
+          onClick={async () => {
+            const { requireSupabaseBrowserClient } = await import('@/lib/supabase')
+            const supabase = requireSupabaseBrowserClient()
+            await supabase.auth.signOut()
+            window.location.href = '/enter'
+          }}
+          title="Déconnexion"
+        >
+          <span className="shrink-0 text-base">⏻</span>
+          <span className="hidden md:block">Déconnexion</span>
+        </button>
+      </div>
+    </aside>
+  )
 }

@@ -1,430 +1,489 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { requireSupabaseBrowserClient } from "@/lib/supabase";
+import ProfileName from "@/components/ProfileName";
 import {
+  ArrowRight,
   Crown,
-  Flame,
-  Menu,
+  Gem,
+  Lock,
   MessageSquare,
-  RefreshCw,
-  Settings,
   Shield,
   ShoppingBag,
   Sparkles,
-  Users,
+  Star,
+  Video,
   Wand2,
-  Zap,
 } from "lucide-react";
-import Sidebar from "@/components/Sidebar";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import {
-  ensureProfileRecord,
-  isVipActive,
-  profileDisplayName,
-  type ProfileRow,
-} from "@/lib/profileCompat";
 
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
+type ProfileRow = {
+  id: string;
+  pseudo?: string | null;
+  credits?: number | null;
+  is_vip?: boolean | null;
+  is_admin?: boolean | null;
+  role?: string | null;
+  active_name_fx_key?: string | null;
+  active_badge_key?: string | null;
+  active_title_key?: string | null;
+  master_title?: string | null;
+};
+
+type UserState = {
+  id: string;
+  email?: string | null;
+};
+
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
-function Tag({
-  children,
-  tone = "default",
-}: {
-  children: ReactNode;
-  tone?: "default" | "red" | "green" | "gold" | "violet";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "border-red-400/20 bg-red-500/10 text-red-100"
-      : tone === "green"
-      ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100"
-      : tone === "gold"
-      ? "border-amber-400/20 bg-amber-400/10 text-amber-100"
-      : tone === "violet"
-      ? "border-fuchsia-400/20 bg-fuchsia-500/10 text-fuchsia-100"
-      : "border-white/10 bg-white/[0.04] text-white/70";
-
-  return (
-    <span
-      className={cx(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.18em]",
-        toneClass
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  icon,
-  tone = "default",
-}: {
-  label: string;
-  value: number | string;
-  icon: ReactNode;
-  tone?: "default" | "red" | "green" | "gold" | "violet";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "border-red-500/14 bg-red-950/10"
-      : tone === "green"
-      ? "border-emerald-500/14 bg-emerald-950/10"
-      : tone === "gold"
-      ? "border-amber-500/14 bg-amber-950/10"
-      : tone === "violet"
-      ? "border-fuchsia-500/14 bg-fuchsia-950/10"
-      : "border-white/10 bg-black/20";
-
-  return (
-    <div
-      className={cx(
-        "rounded-[24px] border p-5 shadow-[0_14px_40px_rgba(0,0,0,0.25)]",
-        toneClass
-      )}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-white/34">
-          {label}
-        </div>
-        <div className="text-white/60">{icon}</div>
-      </div>
-      <div className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
-        {typeof value === "number" ? value.toLocaleString() : value}
-      </div>
-    </div>
-  );
-}
-
-function ActionCard({
-  title,
-  desc,
-  icon,
-  onClick,
-  tone = "default",
-}: {
-  title: string;
-  desc: string;
-  icon: ReactNode;
-  onClick: () => void;
-  tone?: "default" | "red" | "green" | "gold" | "violet";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "border-red-500/14 bg-red-950/10 hover:bg-red-900/16"
-      : tone === "green"
-      ? "border-emerald-500/14 bg-emerald-950/10 hover:bg-emerald-900/16"
-      : tone === "gold"
-      ? "border-amber-500/14 bg-amber-950/10 hover:bg-amber-900/16"
-      : tone === "violet"
-      ? "border-fuchsia-500/14 bg-fuchsia-950/10 hover:bg-fuchsia-900/16"
-      : "border-white/10 bg-black/20 hover:bg-black/30";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        "rounded-[26px] border p-6 text-left shadow-[0_14px_40px_rgba(0,0,0,0.25)] transition duration-300 hover:-translate-y-1",
-        toneClass
-      )}
-    >
-      <div className="mb-4 flex items-center gap-3">
-        <div className="grid h-12 w-12 place-items-center rounded-[18px] border border-white/10 bg-white/[0.04] text-white/75">
-          {icon}
-        </div>
-        <div className="text-base font-black uppercase tracking-[0.14em] text-white">
-          {title}
-        </div>
-      </div>
-      <div className="text-sm leading-6 text-white/58">{desc}</div>
-    </button>
-  );
-}
+const QUICK_LINKS = [
+  {
+    href: "/salons",
+    label: "Salons",
+    description: "Explorer les salles en direct et entrer dans l’espace webcam.",
+    icon: Video,
+    accent:
+      "from-violet-500/20 via-fuchsia-500/10 to-transparent border-violet-500/20",
+  },
+  {
+    href: "/messages",
+    label: "Messages",
+    description: "Retrouver tes conversations privées et réponses en temps réel.",
+    icon: MessageSquare,
+    accent:
+      "from-cyan-500/20 via-sky-500/10 to-transparent border-cyan-500/20",
+  },
+  {
+    href: "/boutique",
+    label: "Boutique",
+    description: "Acheter des effets premium, badges et titres de prestige.",
+    icon: ShoppingBag,
+    accent:
+      "from-amber-500/20 via-yellow-500/10 to-transparent border-amber-500/20",
+  },
+  {
+    href: "/inventaire",
+    label: "Inventaire",
+    description: "Gérer ce que tu possèdes et équiper ton identité visuelle.",
+    icon: Wand2,
+    accent:
+      "from-emerald-500/20 via-teal-500/10 to-transparent border-emerald-500/20",
+  },
+];
 
 export default function DashboardPage() {
   const router = useRouter();
 
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-
+  const [user, setUser] = useState<UserState | null>(null);
   const [profile, setProfile] = useState<ProfileRow | null>(null);
-  const [inventoryCount, setInventoryCount] = useState(0);
-  const [liveRoomsCount, setLiveRoomsCount] = useState(0);
-  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const statusLabel = useMemo(() => {
-    if (profile?.is_admin) return "ADMIN";
-    if (isVipActive(profile)) return "VIP";
-    return "MEMBRE";
-  }, [profile]);
+  useEffect(() => {
+    let cancelled = false;
 
-  const loadDashboard = useCallback(
-    async (firstLoad = false) => {
+    async function load() {
       try {
-        if (firstLoad) setLoading(true);
-        else setRefreshing(true);
-
-        setError("");
+        setLoading(true);
+        setError(null);
 
         const supabase = requireSupabaseBrowserClient();
-        const {
-          data: { user },
-          error: authError,
-        } = await supabase.auth.getUser();
 
-        if (authError || !user) {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+
+        if (!session?.user) {
           router.replace("/enter");
           return;
         }
 
-        const nextProfile = await ensureProfileRecord(user);
+        if (cancelled) return;
 
-        const [inventoryRes, liveRoomsRes, unreadRes] = await Promise.all([
-          supabase.from("inventory_items").select("id").eq("user_id", user.id),
-          supabase.from("rooms").select("id").eq("is_live", true),
-          supabase
-            .from("private_messages")
-            .select("id")
-            .eq("receiver_id", user.id)
-            .eq("is_read", false),
-        ]);
+        setUser({
+          id: session.user.id,
+          email: session.user.email,
+        });
 
-        setProfile(nextProfile);
-        setInventoryCount((inventoryRes.data ?? []).length);
-        setLiveRoomsCount((liveRoomsRes.data ?? []).length);
-        setUnreadMessagesCount((unreadRes.data ?? []).length);
-      } catch (err: any) {
-        setError(err?.message || "Impossible de charger le dashboard.");
+        const { data: profileRow, error: profileError } = await supabase
+          .from("profiles")
+          .select(
+            "id, pseudo, credits, is_vip, is_admin, role, active_name_fx_key, active_badge_key, active_title_key, master_title"
+          )
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        if (profileError) throw profileError;
+
+        if (!cancelled) {
+          setProfile(profileRow ?? { id: session.user.id });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Impossible de charger le dashboard."
+          );
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    },
-    [router]
-  );
+    }
 
-  useEffect(() => {
-    void loadDashboard(true);
-  }, [loadDashboard]);
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  const displayName = useMemo(() => {
+    return profile?.pseudo?.trim() || "Membre Ether";
+  }, [profile]);
+
+  const credits = profile?.credits ?? 0;
+  const isVip = !!profile?.is_vip;
+  const isAdmin = !!profile?.is_admin;
+  const role = (profile?.role || (isAdmin ? "admin" : isVip ? "vip" : "member"))
+    .toString()
+    .toUpperCase();
 
   if (loading) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.20),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
-        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
-          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
-            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
-          </div>
-          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
-            EtherCristal
-          </div>
-          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
-            Dashboard...
-          </h1>
+      <main className="min-h-[70vh]">
+        <div className="grid gap-5 xl:grid-cols-[1.35fr_0.85fr]">
+          <section className="overflow-hidden rounded-[32px] border border-white/10 bg-[#0a0a12] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="mb-6 h-4 w-40 animate-pulse rounded-full bg-white/10" />
+            <div className="mb-4 h-12 w-80 max-w-full animate-pulse rounded-2xl bg-white/10" />
+            <div className="mb-8 h-5 w-96 max-w-full animate-pulse rounded-full bg-white/5" />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="h-24 animate-pulse rounded-3xl bg-white/5" />
+              <div className="h-24 animate-pulse rounded-3xl bg-white/5" />
+              <div className="h-24 animate-pulse rounded-3xl bg-white/5" />
+            </div>
+          </section>
+
+          <section className="rounded-[32px] border border-white/10 bg-[#0a0a12] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="mb-5 h-4 w-24 animate-pulse rounded-full bg-white/10" />
+            <div className="mb-4 h-28 animate-pulse rounded-[28px] bg-white/5" />
+            <div className="space-y-3">
+              <div className="h-14 animate-pulse rounded-2xl bg-white/5" />
+              <div className="h-14 animate-pulse rounded-2xl bg-white/5" />
+              <div className="h-14 animate-pulse rounded-2xl bg-white/5" />
+            </div>
+          </section>
         </div>
-      </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="min-h-[70vh]">
+        <section className="rounded-[32px] border border-rose-500/20 bg-rose-500/10 p-6 text-white shadow-[0_20px_60px_rgba(0,0,0,0.4)]">
+          <div className="text-sm uppercase tracking-[0.2em] text-rose-200/80">
+            Dashboard
+          </div>
+          <h1 className="mt-2 text-2xl font-black text-white">
+            Impossible de charger la page
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm text-rose-100/80">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-6 rounded-2xl border border-rose-400/30 bg-rose-500/15 px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-rose-200 transition hover:bg-rose-500/25"
+          >
+            Recharger
+          </button>
+        </section>
+      </main>
     );
   }
 
   return (
-    <div className="min-h-screen overflow-hidden bg-[#050507] text-white">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-
-      <div className="relative min-h-screen lg:pl-[290px]">
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.20),transparent_35%),radial-gradient(circle_at_85%_80%,rgba(170,50,170,0.12),transparent_35%),radial-gradient(circle_at_50%_5%,rgba(59,130,246,0.10),transparent_35%),linear-gradient(135deg,rgba(255,255,255,0.02),transparent_60%)]" />
-          <div className="absolute -left-24 top-16 h-[450px] w-[450px] rounded-full bg-gradient-to-r from-red-700/20 via-fuchsia-700/16 to-blue-700/12 blur-[160px]" />
-          <div className="absolute right-8 top-1/3 h-[400px] w-[400px] rounded-full bg-gradient-to-r from-red-600/16 via-pink-600/16 to-orange-600/14 blur-[150px]" />
-        </div>
-
-        <div className="relative p-4 sm:p-6 lg:p-8 xl:p-10">
-          <div className="mb-4 flex items-center justify-between gap-3 lg:hidden">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="inline-flex items-center gap-3 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
-            >
-              <Menu className="h-4 w-4" />
-              Menu
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void loadDashboard(false)}
-              className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/16 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.16em] text-white"
-            >
-              <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
-              Refresh
-            </button>
+    <main className="min-h-[70vh]">
+      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.85fr]">
+        <section className="relative overflow-hidden rounded-[34px] border border-white/10 bg-[#0a0a12] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.5)] sm:p-7">
+          <div className="pointer-events-none absolute inset-0">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(167,139,250,0.18),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(34,211,238,0.10),transparent_28%)]" />
+            <div className="absolute -right-16 top-10 h-44 w-44 rounded-full bg-violet-500/10 blur-3xl" />
+            <div className="absolute -left-12 bottom-4 h-36 w-36 rounded-full bg-cyan-400/10 blur-3xl" />
           </div>
 
-          <div className="space-y-6">
-            <section className="relative overflow-hidden rounded-[32px] border border-red-500/14 bg-[#0d0d12] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.34)] sm:p-8">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(190,20,20,0.24),transparent_40%),radial-gradient(circle_at_80%_80%,rgba(255,20,80,0.14),transparent_40%)]" />
+          <div className="relative z-10">
+            <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-200/85">
+              <Sparkles className="h-3.5 w-3.5" />
+              EtherCristal Dashboard
+            </div>
 
-              <div className="relative z-10">
-                <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
-                  espace membre
+            <div className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-xs uppercase tracking-[0.22em] text-white/35">
+                  Espace privé
                 </div>
 
-                <h1 className="mt-3 text-4xl font-black tracking-[-0.04em] text-white md:text-6xl">
-                  Bienvenue
-                </h1>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-white/64">
-                  <span className="font-black text-white">
-                    {profileDisplayName(profile)}
-                  </span>
-                  <span className="text-white/20">•</span>
-                  <span>
-                    crédits <span className="font-black text-white">{profile?.credits ?? 0}</span>
-                  </span>
-                  <span className="text-white/20">•</span>
-                  <span>
-                    rôle <span className="font-black text-white">{profile?.role ?? "member"}</span>
-                  </span>
+                <div className="mt-3 text-3xl font-black leading-none text-white sm:text-4xl">
+                  <ProfileName
+                    name={displayName}
+                    effectClass={profile?.active_name_fx_key ?? null}
+                    size="xl"
+                    className="max-w-full"
+                  />
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Tag tone={profile?.is_admin ? "red" : isVipActive(profile) ? "gold" : "default"}>
-                    {statusLabel}
-                  </Tag>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">
+                    rôle {role}
+                  </span>
 
-                  {profile?.master_title ? (
-                    <Tag tone="violet">{profile.master_title}</Tag>
-                  ) : null}
-
-                  {profile?.active_name_fx_key ? (
-                    <Tag tone="green">
-                      <Zap className="h-3.5 w-3.5" />
-                      {profile.active_name_fx_key}
-                    </Tag>
-                  ) : null}
-
-                  {profile?.active_badge_key ? (
-                    <Tag tone="gold">
+                  {isVip && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/25 bg-amber-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
                       <Crown className="h-3.5 w-3.5" />
-                      {profile.active_badge_key}
-                    </Tag>
-                  ) : null}
+                      VIP
+                    </span>
+                  )}
+
+                  {isAdmin && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/25 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-200">
+                      <Shield className="h-3.5 w-3.5" />
+                      Admin
+                    </span>
+                  )}
                 </div>
 
-                {error ? (
-                  <div className="mt-5 rounded-[18px] border border-red-400/18 bg-red-500/10 px-4 py-4 text-sm text-red-100">
-                    {error}
-                  </div>
-                ) : null}
+                <p className="mt-5 max-w-2xl text-sm leading-relaxed text-white/55">
+                  Ton centre de contrôle EtherCristal. Accède à tes salons,
+                  messages, effets, boutique et identité premium sans le bordel
+                  inutile.
+                </p>
+              </div>
 
-                <div className="mt-5">
-                  <button
-                    type="button"
-                    onClick={() => void loadDashboard(false)}
-                    className="inline-flex items-center gap-2 rounded-[18px] border border-red-500/14 bg-red-950/12 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-white/85 transition hover:bg-red-900/16"
-                  >
-                    <RefreshCw className={cx("h-4 w-4", refreshing && "animate-spin")} />
-                    {refreshing ? "Actualisation..." : "Actualiser"}
-                  </button>
+              <div className="w-full max-w-[240px] rounded-[28px] border border-white/10 bg-black/25 p-4 backdrop-blur-xl">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-white/35">
+                  Compte
+                </div>
+                <div className="mt-3 truncate text-sm font-semibold text-white/85">
+                  {user?.email || "email indisponible"}
+                </div>
+                <div className="mt-4 flex items-center gap-2 text-sm text-white/75">
+                  <Gem className="h-4 w-4 text-violet-300" />
+                  <span className="font-black text-white">
+                    {credits.toLocaleString("fr-CA")}
+                  </span>
+                  <span className="text-white/35">crédits</span>
                 </div>
               </div>
-            </section>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard
-                label="Crédits"
-                value={profile?.credits ?? 0}
-                icon={<Sparkles className="h-4 w-4" />}
-                tone="gold"
-              />
-              <StatCard
-                label="Messages non lus"
-                value={unreadMessagesCount}
-                icon={<MessageSquare className="h-4 w-4" />}
-                tone="violet"
-              />
-              <StatCard
-                label="Items inventaire"
-                value={inventoryCount}
-                icon={<Wand2 className="h-4 w-4" />}
-                tone="green"
-              />
-              <StatCard
-                label="Salons live"
-                value={liveRoomsCount}
-                icon={<Users className="h-4 w-4" />}
-                tone="red"
-              />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <ActionCard
-                title="Désir intense"
-                desc="Cam-to-cam aléatoire et accès direct au module principal."
-                icon={<Flame className="h-5 w-5" />}
-                onClick={() => router.push("/desir")}
-                tone="red"
-              />
+            <div className="mt-7 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-white/35">
+                  Statut
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-lg font-black text-white">
+                  {isVip ? (
+                    <>
+                      <Crown className="h-5 w-5 text-amber-300" />
+                      VIP actif
+                    </>
+                  ) : (
+                    <>
+                      <Star className="h-5 w-5 text-white/60" />
+                      Membre Ether
+                    </>
+                  )}
+                </div>
+              </div>
 
-              <ActionCard
-                title="Salons webcam"
-                desc="Voir les rooms actives, rejoindre et suivre le live."
-                icon={<Users className="h-5 w-5" />}
-                onClick={() => router.push("/salons")}
-                tone="violet"
-              />
+              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-white/35">
+                  Effet actif
+                </div>
+                <div className="mt-3 text-lg font-black text-white">
+                  {profile?.active_name_fx_key
+                    ? profile.active_name_fx_key
+                    : "Aucun effet équipé"}
+                </div>
+              </div>
 
-              <ActionCard
-                title="Messages"
-                desc="Retrouver tes discussions privées en temps réel."
-                icon={<MessageSquare className="h-5 w-5" />}
-                onClick={() => router.push("/messages")}
-                tone="default"
-              />
-
-              <ActionCard
-                title="Boutique"
-                desc="Effets, badges, titres et achats du compte."
-                icon={<ShoppingBag className="h-5 w-5" />}
-                onClick={() => router.push("/boutique")}
-                tone="gold"
-              />
-
-              <ActionCard
-                title="Inventaire"
-                desc="Équiper tes effets actifs et gérer ton style."
-                icon={<Wand2 className="h-5 w-5" />}
-                onClick={() => router.push("/inventaire")}
-                tone="green"
-              />
-
-              <ActionCard
-                title="Options"
-                desc="Compte, préférences et réglages personnels."
-                icon={<Settings className="h-5 w-5" />}
-                onClick={() => router.push("/options")}
-                tone="default"
-              />
-
-              {profile?.is_admin ? (
-                <ActionCard
-                  title="Administration"
-                  desc="Accès complet au hub admin, sécurité, reports et paiements."
-                  icon={<Shield className="h-5 w-5" />}
-                  onClick={() => router.push("/admin")}
-                  tone="red"
-                />
-              ) : null}
+              <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-white/35">
+                  Accès rapide
+                </div>
+                <div className="mt-3 inline-flex items-center gap-2 text-lg font-black text-white">
+                  <Lock className="h-5 w-5 text-cyan-300" />
+                  Zone privée active
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
+
+        <section className="rounded-[34px] border border-white/10 bg-[#0a0a12] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.5)] sm:p-7">
+          <div className="text-xs uppercase tracking-[0.22em] text-white/35">
+            Navigation principale
+          </div>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            Ce que tu veux faire maintenant
+          </h2>
+
+          <div className="mt-5 space-y-3">
+            {QUICK_LINKS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cx(
+                    "group block rounded-[26px] border bg-gradient-to-br p-4 transition-all duration-200 hover:-translate-y-[2px] hover:border-white/20",
+                    item.accent
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-black/25 text-white/85">
+                      <Icon className="h-5 w-5" />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-black text-white">
+                          {item.label}
+                        </div>
+                        <ArrowRight className="h-4 w-4 shrink-0 text-white/30 transition group-hover:translate-x-1 group-hover:text-white/70" />
+                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-white/50">
+                        {item.description}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
       </div>
-    </div>
+
+      <section className="mt-5 grid gap-5 xl:grid-cols-[1fr_1fr]">
+        <div className="rounded-[34px] border border-white/10 bg-[#0a0a12] p-6 shadow-[0_24px_70px_rgba(0,0,0,0.45)] sm:p-7">
+          <div className="text-xs uppercase tracking-[0.22em] text-white/35">
+            Identité
+          </div>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            Présence EtherCristal
+          </h2>
+          <div className="mt-5 rounded-[28px] border border-white/10 bg-black/25 p-5">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-white/35">
+              Aperçu membre
+            </div>
+            <div className="mt-4 text-2xl font-black text-white sm:text-3xl">
+              <ProfileName
+                name={displayName}
+                effectClass={profile?.active_name_fx_key ?? null}
+                size="xl"
+              />
+            </div>
+
+            {profile?.master_title ? (
+              <div className="mt-3 text-sm font-semibold text-violet-200/85">
+                {profile.master_title}
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-white/40">
+                Aucun titre premium équipé.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-[34px] border border-white/10 bg-[#0a0a12] p-6 shadow-[0_24px_70px_rgba(0,0,0,0.45)] sm:p-7">
+          <div className="text-xs uppercase tracking-[0.22em] text-white/35">
+            État du compte
+          </div>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            Résumé rapide
+          </h2>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                Messages
+              </div>
+              <div className="mt-2 text-lg font-black text-white">
+                Centre privé
+              </div>
+              <div className="mt-1 text-xs text-white/45">
+                Réponses en direct et échanges privés.
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                Boutique
+              </div>
+              <div className="mt-2 text-lg font-black text-white">
+                Effets premium
+              </div>
+              <div className="mt-1 text-xs text-white/45">
+                Achète et équipe ton style visuel.
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                Salons
+              </div>
+              <div className="mt-2 text-lg font-black text-white">
+                Accès direct
+              </div>
+              <div className="mt-1 text-xs text-white/45">
+                Rejoins les salles webcam sans détour.
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                Sécurité
+              </div>
+              <div className="mt-2 text-lg font-black text-white">
+                Session active
+              </div>
+              <div className="mt-1 text-xs text-white/45">
+                Accès membre protégé et espace réservé.
+              </div>
+            </div>
+          </div>
+
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm font-bold uppercase tracking-[0.18em] text-rose-200 transition hover:bg-rose-500/20"
+            >
+              <Shield className="h-4 w-4" />
+              Ouvrir l’admin
+            </Link>
+          )}
+
+          {!isAdmin && (
+            <Link
+              href="/vip"
+              className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm font-bold uppercase tracking-[0.18em] text-amber-200 transition hover:bg-amber-500/20"
+            >
+              <Crown className="h-4 w-4" />
+              Voir le VIP
+            </Link>
+          )}
+        </div>
+      </section>
+    </main>
   );
 }

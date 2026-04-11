@@ -1,137 +1,119 @@
-"use client";
+import type { Metadata } from 'next'
 
-import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
-import Sidebar from "@/components/Sidebar";
-import { ToastProvider } from "@/components/ToastHost";
-import { Menu, X, Sparkles } from "lucide-react";
-
-function cx(...c: Array<string | false | null | undefined>) {
-  return c.filter(Boolean).join(" ");
+export const metadata: Metadata = {
+  title: 'Dashboard — EtherCristal',
 }
 
-export default function ProtectedLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const pathname = usePathname();
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
-
-  useEffect(() => {
-    const previous = document.body.style.overflow;
-    if (open) {
-      document.body.style.overflow = "hidden";
-    }
-    return () => {
-      document.body.style.overflow = previous;
-    };
-  }, [open]);
-
+export default function DashboardPage() {
   return (
-    <ToastProvider>
-      <div className="min-h-screen bg-[#07070a] text-white">
-        <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,70,120,0.12),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(80,220,255,0.10),transparent_28%),linear-gradient(180deg,#07070a_0%,#09090d_100%)]" />
-          <div className="absolute -left-24 top-24 h-64 w-64 rounded-full bg-rose-500/10 blur-3xl" />
-          <div className="absolute -right-24 bottom-16 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+    <div className="min-h-screen bg-[#06060f] text-white px-6 py-10 md:px-10 md:py-12">
+      {/* Header */}
+      <div className="mb-10">
+        <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-violet-500/25 bg-violet-950/30 px-3 py-1 backdrop-blur-sm">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300/80">
+            Tableau de bord
+          </span>
         </div>
+        <h1
+          className="text-3xl font-black tracking-tight md:text-4xl"
+          style={{
+            background: 'linear-gradient(135deg, #fff 30%, #c4b5fd 60%, #818cf8 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+          }}
+        >
+          EtherCristal
+        </h1>
+        <p className="mt-1 text-sm text-white/30">Bienvenue dans ton espace privé.</p>
+      </div>
 
-        <div className="hidden lg:flex">
-          <Sidebar variant="desktop" />
-          <main className="min-h-screen flex-1">
-            <div className="mx-auto w-full max-w-[1240px] p-6 xl:p-8">
-              <div className="rounded-[36px] border border-white/10 bg-white/[0.03] p-4 shadow-[0_25px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl sm:p-6">
-                {children}
-              </div>
-            </div>
-          </main>
-        </div>
-
-        <div className="lg:hidden">
-          <header className="sticky top-0 z-40 border-b border-white/10 bg-black/50 backdrop-blur-2xl">
-            <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-3 px-4 py-3">
-              <button
-                onClick={() => setOpen(true)}
-                className="rounded-2xl border border-white/10 bg-white/5 p-2 transition hover:bg-white/10"
-                aria-label="Open menu"
-              >
-                <Menu className="h-5 w-5" />
-              </button>
-
-              <div className="flex items-center gap-2">
-                <div className="grid h-9 w-9 place-items-center rounded-2xl border border-white/10 bg-white/5">
-                  <Sparkles className="h-4 w-4 text-white/80" />
-                </div>
-                <div className="leading-tight">
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-                    EtherCristal
-                  </div>
-                  <div className="text-sm font-black text-white">
-                    Espace privé
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-9 w-9" />
-            </div>
-          </header>
-
+      {/* Stats row */}
+      <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4">
+        {[
+          { label: 'Éclats', value: '4 200', color: 'text-violet-300', border: 'border-violet-500/20', glow: 'rgba(139,92,246,0.08)' },
+          { label: 'Articles possédés', value: '3', color: 'text-cyan-300', border: 'border-cyan-500/20', glow: 'rgba(6,182,212,0.08)' },
+          { label: 'Effet actif', value: 'Flamme', color: 'text-amber-300', border: 'border-amber-500/20', glow: 'rgba(245,158,11,0.08)' },
+          { label: 'Rang', value: 'Éther', color: 'text-rose-300', border: 'border-rose-500/20', glow: 'rgba(244,63,94,0.08)' },
+        ].map(({ label, value, color, border, glow }) => (
           <div
-            className={cx(
-              "fixed inset-0 z-50 transition",
-              open
-                ? "pointer-events-auto opacity-100"
-                : "pointer-events-none opacity-0"
-            )}
+            key={label}
+            className={`rounded-2xl border ${border} bg-[#0b0b18] px-5 py-5`}
+            style={{ boxShadow: `0 0 24px ${glow}` }}
           >
-            <div
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-              onClick={() => setOpen(false)}
-            />
-
-            <aside
-              className={cx(
-                "absolute left-0 top-0 h-full w-[86%] max-w-[360px] border-r border-white/10 bg-black/80 shadow-[0_30px_90px_rgba(0,0,0,0.65)] backdrop-blur-2xl transition-transform duration-300",
-                open ? "translate-x-0" : "-translate-x-full"
-              )}
-            >
-              <div className="flex items-center justify-between border-b border-white/10 p-4">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">
-                    Menu
-                  </div>
-                  <div className="text-lg font-black text-white">
-                    Navigation
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setOpen(false)}
-                  className="rounded-2xl border border-white/10 bg-white/5 p-2 transition hover:bg-white/10"
-                  aria-label="Close menu"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="h-[calc(100%-81px)] overflow-y-auto">
-                <Sidebar variant="drawer" />
-              </div>
-            </aside>
+            <p className="mb-1 text-[10px] uppercase tracking-widest text-white/25">{label}</p>
+            <p className={`text-2xl font-black ${color}`}>{value}</p>
           </div>
+        ))}
+      </div>
 
-          <main className="mx-auto w-full max-w-[1240px] p-4 pb-10">
-            <div className="rounded-[28px] border border-white/10 bg-white/[0.03] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
-              {children}
-            </div>
-          </main>
+      {/* Main grid */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+
+        {/* Recent activity */}
+        <div className="lg:col-span-2 rounded-2xl border border-white/[0.06] bg-[#0b0b18] p-6">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-white/60">
+              Activité récente
+            </h2>
+            <span className="h-px flex-1 mx-4 bg-white/[0.05]" />
+          </div>
+          <div className="flex flex-col gap-3">
+            {[
+              { action: 'Effet équipé', detail: 'Flamme Éternelle', time: 'Il y a 2h', dot: 'bg-amber-400' },
+              { action: 'Article acheté', detail: 'Nova Starburst', time: 'Il y a 1j', dot: 'bg-violet-400' },
+              { action: 'Compte créé', detail: 'Bienvenue dans EtherCristal', time: 'Il y a 3j', dot: 'bg-emerald-400' },
+            ].map(({ action, detail, time, dot }) => (
+              <div
+                key={action + time}
+                className="flex items-center gap-4 rounded-xl border border-white/[0.04] bg-white/[0.02] px-4 py-3"
+              >
+                <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-white/70 truncate">{action}</p>
+                  <p className="text-[11px] text-white/30 truncate">{detail}</p>
+                </div>
+                <span className="shrink-0 text-[10px] text-white/20">{time}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick links */}
+        <div className="rounded-2xl border border-white/[0.06] bg-[#0b0b18] p-6">
+          <div className="mb-5 flex items-center gap-4">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-white/60">
+              Accès rapide
+            </h2>
+            <span className="h-px flex-1 bg-white/[0.05]" />
+          </div>
+          <div className="flex flex-col gap-2">
+            {[
+              { label: 'Boutique', href: '/boutique', icon: '✦', color: 'text-violet-300', border: 'border-violet-500/20', bg: 'bg-violet-500/8' },
+              { label: 'Inventaire', href: '/inventaire', icon: '⬡', color: 'text-cyan-300', border: 'border-cyan-500/20', bg: 'bg-cyan-500/8' },
+              { label: 'Salons', href: '/salons', icon: '◈', color: 'text-amber-300', border: 'border-amber-500/20', bg: 'bg-amber-500/8' },
+              { label: 'Profil', href: '/profile', icon: '◉', color: 'text-rose-300', border: 'border-rose-500/20', bg: 'bg-rose-500/8' },
+            ].map(({ label, href, icon, color, border, bg }) => (
+              <a
+                key={href}
+                href={href}
+                className={`flex items-center gap-3 rounded-xl border ${border} ${bg} px-4 py-3 transition-all duration-150 hover:brightness-125`}
+              >
+                <span className={`text-base ${color}`}>{icon}</span>
+                <span className="text-sm font-semibold text-white/70">{label}</span>
+                <span className="ml-auto text-white/20">›</span>
+              </a>
+            ))}
+          </div>
         </div>
       </div>
-    </ToastProvider>
-  );
+
+      {/* Ambient bottom glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed bottom-0 left-1/2 -translate-x-1/2 h-32 w-1/2 blur-3xl opacity-30"
+        style={{ background: 'radial-gradient(ellipse, rgba(109,40,217,0.3) 0%, transparent 70%)' }}
+      />
+    </div>
+  )
 }

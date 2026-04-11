@@ -1,64 +1,438 @@
-@import "tailwindcss";
+/* =========================
+   ETHERCRISTAL — NAME FX
+   ========================= */
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background: black;
-  color: white;
-  font-family: system-ui, sans-serif;
+.name-fx {
+  position: relative;
+  display: inline-block;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  isolation: isolate;
+  will-change: transform, filter, opacity;
+  text-rendering: optimizeLegibility;
 }
 
-* {
-  box-sizing: border-box;
+.name-fx::before,
+.name-fx::after {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  content: attr(data-text);
+  display: block;
+  white-space: nowrap;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+.name-fx-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
 }
 
-.input {
-  width: 100%;
-  background: #27272a;
-  border: 1px solid #3f3f46;
-  border-radius: 12px;
-  padding: 12px 14px;
-  color: white;
-  outline: none;
-  transition: 0.2s ease;
+/* ---------- 1. FLAME TO TEXT ---------- */
+
+.fx-flame-to-text {
+  color: #ffd36e;
+  text-shadow:
+    0 0 8px rgba(255, 160, 60, 0.6),
+    0 0 18px rgba(255, 90, 54, 0.45),
+    0 0 34px rgba(255, 50, 20, 0.3);
+  animation: ec-flame-body 2.6s ease-in-out infinite;
 }
 
-.input:focus {
-  border-color: #ef4444;
-  background: #18181b;
+.fx-flame-to-text::before {
+  color: rgba(255, 120, 40, 0.75);
+  filter: blur(6px);
+  transform: translateY(-1px) scale(1.02);
+  z-index: -1;
+  animation: ec-flame-aura 1.6s ease-in-out infinite;
 }
 
-.btn-primary {
-  width: 100%;
-  background: #dc2626;
-  color: white;
-  font-weight: 600;
-  padding: 12px 14px;
-  border: none;
-  border-radius: 12px;
-  transition: 0.2s ease;
-  cursor: pointer;
+.fx-flame-to-text::after {
+  color: rgba(255, 240, 200, 0.8);
+  mix-blend-mode: screen;
+  clip-path: polygon(0 100%, 100% 100%, 100% 78%, 0 86%);
+  animation: ec-flame-flicker 0.9s linear infinite;
 }
 
-.btn-primary:hover {
-  background: #b91c1c;
+/* ---------- 2. STARBURST LETTERS ---------- */
+
+.fx-starburst-letters {
+  color: #f3f7ff;
+  text-shadow:
+    0 0 10px rgba(255,255,255,0.55),
+    0 0 24px rgba(120, 200, 255, 0.35);
+  animation: ec-star-core 2.4s ease-in-out infinite;
 }
 
-.btn-primary:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
+.fx-starburst-letters::before {
+  color: #8be9ff;
+  filter: blur(7px);
+  opacity: 0.65;
+  z-index: -1;
+  animation: ec-starburst 2.2s ease-out infinite;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
+.fx-starburst-letters::after {
+  color: #ffffff;
+  opacity: 0.95;
+  clip-path: inset(0 0 0 0);
+  animation: ec-twinkle-sweep 1.8s linear infinite;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #444;
-  border-radius: 999px;
+/* ---------- 3. LIQUID CRYSTAL ---------- */
+
+.fx-liquid-crystal-form {
+  background: linear-gradient(135deg, #dffcff 0%, #9eeaff 30%, #7cbbff 60%, #eff9ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 10px rgba(115, 220, 255, 0.28));
+  animation: ec-crystal-shift 3s ease-in-out infinite;
+}
+
+.fx-liquid-crystal-form::before {
+  color: rgba(180, 250, 255, 0.35);
+  filter: blur(10px);
+  z-index: -1;
+  animation: ec-crystal-glow 2.4s ease-in-out infinite;
+}
+
+.fx-liquid-crystal-form::after {
+  color: rgba(255,255,255,0.35);
+  clip-path: polygon(0 45%, 100% 30%, 100% 52%, 0 67%);
+  mix-blend-mode: screen;
+  animation: ec-crystal-shine 2.1s linear infinite;
+}
+
+/* ---------- 4. SMOKE CONDENSE ---------- */
+
+.fx-smoke-condense-text {
+  color: #d7d9e8;
+  text-shadow:
+    0 0 8px rgba(215, 217, 232, 0.15),
+    0 0 20px rgba(90, 95, 120, 0.28);
+  animation: ec-smoke-solidify 3.4s ease-in-out infinite;
+}
+
+.fx-smoke-condense-text::before {
+  color: rgba(170, 175, 205, 0.45);
+  filter: blur(9px);
+  z-index: -1;
+  animation: ec-smoke-swirl 3.2s ease-in-out infinite;
+}
+
+.fx-smoke-condense-text::after {
+  color: rgba(255,255,255,0.16);
+  transform: translateX(-3px);
+  animation: ec-smoke-drift 2.8s ease-in-out infinite;
+}
+
+/* ---------- 5. FRACTAL NAME ---------- */
+
+.fx-fractal-name-evolution {
+  background: linear-gradient(90deg, #8a7dff, #59d0ff, #f0f6ff, #8a7dff);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ec-fractal-flow 3s linear infinite;
+}
+
+.fx-fractal-name-evolution::before {
+  color: rgba(138, 125, 255, 0.35);
+  filter: blur(7px);
+  z-index: -1;
+  animation: ec-fractal-pulse 2s ease-in-out infinite;
+}
+
+.fx-fractal-name-evolution::after {
+  color: rgba(255,255,255,0.2);
+  clip-path: polygon(0 15%, 100% 0, 100% 30%, 0 45%);
+  animation: ec-fractal-scan 1.5s linear infinite;
+}
+
+/* ---------- 6. ORGANIC GROWTH ---------- */
+
+.fx-organic-growth-text {
+  color: #b9ffcb;
+  text-shadow:
+    0 0 10px rgba(112, 255, 156, 0.25),
+    0 0 22px rgba(90, 214, 122, 0.22);
+  animation: ec-organic-grow 3s ease-in-out infinite;
+}
+
+.fx-organic-growth-text::before {
+  color: rgba(120, 255, 170, 0.32);
+  filter: blur(8px);
+  z-index: -1;
+  animation: ec-organic-bloom 2.8s ease-in-out infinite;
+}
+
+.fx-organic-growth-text::after {
+  color: rgba(220, 255, 225, 0.35);
+  transform-origin: left center;
+  animation: ec-organic-vine 2.2s ease-in-out infinite;
+}
+
+/* ---------- 7. ICE CRYSTALLIZATION ---------- */
+
+.fx-ice-crystallization {
+  background: linear-gradient(180deg, #ffffff 0%, #dff7ff 35%, #9fe7ff 65%, #7fc8ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 12px rgba(140, 220, 255, 0.28));
+  animation: ec-ice-freeze 2.8s ease-in-out infinite;
+}
+
+.fx-ice-crystallization::before {
+  color: rgba(210, 245, 255, 0.4);
+  filter: blur(7px);
+  z-index: -1;
+  animation: ec-ice-aura 2.6s ease-in-out infinite;
+}
+
+.fx-ice-crystallization::after {
+  color: rgba(255,255,255,0.45);
+  clip-path: polygon(0 35%, 100% 20%, 100% 42%, 0 57%);
+  animation: ec-ice-shimmer 1.7s linear infinite;
+}
+
+/* ---------- 8. STARDUST ASSEMBLY ---------- */
+
+.fx-stardust-assembly {
+  color: #ffeac6;
+  text-shadow:
+    0 0 8px rgba(255, 234, 198, 0.25),
+    0 0 22px rgba(139, 233, 255, 0.22);
+  animation: ec-stardust-form 2.7s ease-in-out infinite;
+}
+
+.fx-stardust-assembly::before {
+  color: rgba(255, 210, 245, 0.36);
+  filter: blur(9px);
+  z-index: -1;
+  animation: ec-stardust-cloud 2.5s ease-in-out infinite;
+}
+
+.fx-stardust-assembly::after {
+  color: rgba(255,255,255,0.55);
+  clip-path: inset(0 100% 0 0);
+  animation: ec-stardust-sweep 2.1s linear infinite;
+}
+
+/* ---------- 9. WATER FLOW ---------- */
+
+.fx-water-flow-text {
+  background: linear-gradient(90deg, #d8f8ff, #67dfff, #3da2ff, #d8f8ff);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ec-water-flow 2.4s linear infinite;
+}
+
+.fx-water-flow-text::before {
+  color: rgba(103, 223, 255, 0.3);
+  filter: blur(8px);
+  z-index: -1;
+  animation: ec-water-mist 2.8s ease-in-out infinite;
+}
+
+.fx-water-flow-text::after {
+  color: rgba(255,255,255,0.34);
+  clip-path: polygon(0 45%, 100% 32%, 100% 55%, 0 66%);
+  animation: ec-water-glint 1.6s linear infinite;
+}
+
+/* ---------- 10. CORAL BRANCH ---------- */
+
+.fx-coral-branch-growth {
+  color: #ffd4c6;
+  text-shadow:
+    0 0 8px rgba(255, 159, 128, 0.24),
+    0 0 20px rgba(255, 127, 189, 0.2);
+  animation: ec-coral-grow 3.2s ease-in-out infinite;
+}
+
+.fx-coral-branch-growth::before {
+  color: rgba(255, 160, 128, 0.3);
+  filter: blur(8px);
+  z-index: -1;
+  animation: ec-coral-pulse 2.6s ease-in-out infinite;
+}
+
+.fx-coral-branch-growth::after {
+  color: rgba(255, 240, 230, 0.28);
+  transform-origin: left center;
+  animation: ec-coral-branches 2.4s ease-in-out infinite;
+}
+
+/* =========================
+   KEYFRAMES
+   ========================= */
+
+@keyframes ec-flame-body {
+  0%, 100% { transform: translateY(0) scale(1); filter: saturate(1); }
+  25% { transform: translateY(-1px) scale(1.01); filter: saturate(1.12); }
+  50% { transform: translateY(-2px) scale(1.015); filter: saturate(1.2); }
+  75% { transform: translateY(-1px) scale(1.01); filter: saturate(1.08); }
+}
+
+@keyframes ec-flame-aura {
+  0%, 100% { opacity: 0.45; transform: translateY(2px) scale(0.99); }
+  50% { opacity: 0.9; transform: translateY(-3px) scale(1.04); }
+}
+
+@keyframes ec-flame-flicker {
+  0%, 100% { opacity: 0.35; transform: translateY(0); }
+  20% { opacity: 0.65; transform: translateY(-1px); }
+  50% { opacity: 0.45; transform: translateY(-3px); }
+  80% { opacity: 0.7; transform: translateY(-1px); }
+}
+
+@keyframes ec-star-core {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.025); }
+}
+
+@keyframes ec-starburst {
+  0% { opacity: 0.15; transform: scale(0.94); }
+  30% { opacity: 0.8; transform: scale(1.04); }
+  100% { opacity: 0.2; transform: scale(1.08); }
+}
+
+@keyframes ec-twinkle-sweep {
+  0% { opacity: 0; clip-path: inset(0 100% 0 0); }
+  35% { opacity: 1; }
+  100% { opacity: 0; clip-path: inset(0 0 0 100%); }
+}
+
+@keyframes ec-crystal-shift {
+  0%, 100% { background-position: 0% 50%; transform: scale(1); }
+  50% { background-position: 100% 50%; transform: scale(1.01); }
+}
+
+@keyframes ec-crystal-glow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+
+@keyframes ec-crystal-shine {
+  0% { transform: translateX(-20%); opacity: 0; }
+  25% { opacity: 0.55; }
+  100% { transform: translateX(20%); opacity: 0; }
+}
+
+@keyframes ec-smoke-solidify {
+  0%, 100% { letter-spacing: 0.04em; opacity: 1; }
+  50% { letter-spacing: 0.08em; opacity: 0.92; }
+}
+
+@keyframes ec-smoke-swirl {
+  0% { opacity: 0.2; transform: translate(-4px, 0); }
+  50% { opacity: 0.65; transform: translate(4px, -2px); }
+  100% { opacity: 0.2; transform: translate(-3px, 1px); }
+}
+
+@keyframes ec-smoke-drift {
+  0%, 100% { opacity: 0.15; transform: translateX(-4px); }
+  50% { opacity: 0.35; transform: translateX(5px); }
+}
+
+@keyframes ec-fractal-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes ec-fractal-pulse {
+  0%, 100% { opacity: 0.22; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(1.03); }
+}
+
+@keyframes ec-fractal-scan {
+  0% { opacity: 0; transform: translateY(-3px); }
+  50% { opacity: 0.35; }
+  100% { opacity: 0; transform: translateY(3px); }
+}
+
+@keyframes ec-organic-grow {
+  0%, 100% { transform: scale(1); letter-spacing: 0.03em; }
+  50% { transform: scale(1.02); letter-spacing: 0.06em; }
+}
+
+@keyframes ec-organic-bloom {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes ec-organic-vine {
+  0%, 100% { opacity: 0.18; transform: scaleX(0.98); }
+  50% { opacity: 0.4; transform: scaleX(1.02); }
+}
+
+@keyframes ec-ice-freeze {
+  0%, 100% { filter: drop-shadow(0 0 10px rgba(140,220,255,0.22)); }
+  50% { filter: drop-shadow(0 0 18px rgba(180,240,255,0.38)); }
+}
+
+@keyframes ec-ice-aura {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes ec-ice-shimmer {
+  0% { opacity: 0; transform: translateX(-6%); }
+  40% { opacity: 0.5; }
+  100% { opacity: 0; transform: translateX(8%); }
+}
+
+@keyframes ec-stardust-form {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.025); opacity: 0.96; }
+}
+
+@keyframes ec-stardust-cloud {
+  0% { opacity: 0.2; transform: translateX(-4px) scale(0.98); }
+  50% { opacity: 0.55; transform: translateX(4px) scale(1.03); }
+  100% { opacity: 0.2; transform: translateX(-2px) scale(1); }
+}
+
+@keyframes ec-stardust-sweep {
+  0% { clip-path: inset(0 100% 0 0); opacity: 0; }
+  20% { opacity: 0.65; }
+  100% { clip-path: inset(0 0 0 100%); opacity: 0; }
+}
+
+@keyframes ec-water-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 220% 50%; }
+}
+
+@keyframes ec-water-mist {
+  0%, 100% { opacity: 0.2; transform: translateY(1px); }
+  50% { opacity: 0.5; transform: translateY(-2px); }
+}
+
+@keyframes ec-water-glint {
+  0% { opacity: 0; transform: translateX(-8%); }
+  35% { opacity: 0.45; }
+  100% { opacity: 0; transform: translateX(8%); }
+}
+
+@keyframes ec-coral-grow {
+  0%, 100% { letter-spacing: 0.03em; transform: scale(1); }
+  50% { letter-spacing: 0.06em; transform: scale(1.02); }
+}
+
+@keyframes ec-coral-pulse {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes ec-coral-branches {
+  0%, 100% { opacity: 0.15; transform: scaleX(0.98); }
+  50% { opacity: 0.38; transform: scaleX(1.03); }
 }

@@ -1,4 +1,4 @@
-name: Deploy send-push
+name: Deploy Edge Functions
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "supabase/functions/send-push/**"
+      - "supabase/functions/notify-user/**"
       - "supabase/config.toml"
       - ".github/workflows/deploy-functions.yml"
   workflow_dispatch:
@@ -27,9 +28,6 @@ jobs:
         with:
           version: latest
 
-      - name: Show CLI version
-        run: supabase --version
-
       - name: Check env
         run: |
           if [ -z "$SUPABASE_PROJECT_ID" ]; then
@@ -42,9 +40,8 @@ jobs:
           fi
           echo "Supabase env looks set"
 
-      - name: Debug project ref length
-        run: |
-          echo "PROJECT REF LENGTH: ${#SUPABASE_PROJECT_ID}"
-
       - name: Deploy send-push
-        run: supabase functions deploy send-push --project-ref "$SUPABASE_PROJECT_ID" --debug
+        run: supabase functions deploy send-push --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Deploy notify-user
+        run: supabase functions deploy notify-user --project-ref "$SUPABASE_PROJECT_ID"

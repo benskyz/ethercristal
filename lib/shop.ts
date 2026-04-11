@@ -1,3 +1,25 @@
+import { NAME_EFFECTS } from "@/lib/nameEffects";
+
+export const SHOP_NAME_EFFECT_ITEMS = NAME_EFFECTS.map((fx, index) => ({
+  id: `namefx_${fx.key}`,
+  type: "name_effect",
+  key: fx.key,
+  label: fx.label,
+  shortLabel: fx.shortLabel,
+  description: fx.description,
+  rarity: fx.rarity,
+  price: fx.price,
+  previewText: fx.previewText,
+  tags: fx.tags,
+  cssClass: fx.cssClass,
+  category: fx.category,
+  colors: fx.colors,
+  inventory: {
+    stackable: false,
+    equipSlot: "name_effect",
+  },
+}));
+
 export type ShopCategory = "name_fx" | "badge" | "title" | "vip_plan" | "master_ether";
 export type Rarity = "COMMON" | "RARE" | "EPIC" | "LEGENDARY" | "MYTHIC";
 

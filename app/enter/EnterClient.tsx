@@ -1,453 +1,615 @@
-"use client";
+'use client'
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { requireSupabaseBrowserClient } from "@/lib/supabase";
-import { ensureProfileRecord } from "@/lib/profileCompat";
-import {
-  AlertCircle,
-  ArrowRight,
-  Eye,
-  EyeOff,
-  Lock,
-  Mail,
-  RefreshCw,
-  Shield,
-  User,
-} from "lucide-react";
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { requireSupabaseBrowserClient } from '@/lib/supabase'
 
-type Mode = "login" | "register";
+type Mode = 'login' | 'register'
 
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
+interface LoginFields {
+  email: string
+  password: string
 }
 
-function isValidEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+interface RegisterFields {
+  pseudo: string
+  email: string
+  password: string
+  confirm: string
+  ageConfirmed: boolean
 }
 
-function getPasswordStrength(value: string) {
-  let score = 0;
-  if (value.length >= 8) score++;
-  if (/[A-Z]/.test(value)) score++;
-  if (/[a-z]/.test(value)) score++;
-  if (/\d/.test(value)) score++;
-  if (/[^A-Za-z0-9]/.test(value)) score++;
-
-  if (score <= 2) return "faible";
-  if (score <= 4) return "moyen";
-  return "fort";
-}
-
-export default function EnterClient() {
-  const router = useRouter();
-
-  const [mode, setMode] = useState<Mode>("login");
-  const [checkingSession, setCheckingSession] = useState(true);
-
-  const [pseudo, setPseudo] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  const [showPassword, setShowPassword] = useState(false);
-  const [agree18, setAgree18] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const passwordStrength = useMemo(() => getPasswordStrength(password), [password]);
+function CrystalCanvas() {
+  const ref = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
-    let mounted = true;
+    const canvas = ref.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const resize = () => {
+      canvas.width = window.innerWidth
+      canvas.height = window.innerHeight
+    }
+
+    resize()
+    window.addEventListener('resize', resize)
+
+    type P = {
+      x: number
+      y: number
+      r: number
+      dx: number
+      dy: number
+      alpha: number
+      color: string
+    }
+
+    const COLORS = [
+      'rgba(167,139,250,',
+      'rgba(99,179,237,',
+      'rgba(255,255,255,',
+      'rgba(216,180,254,',
+      'rgba(6,182,212,',
+    ]
+
+    const pts: P[] = Array.from({ length: 110 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.3 + 0.2,
+      dx: (Math.random() - 0.5) * 0.2,
+      dy: (Math.random() - 0.5) * 0.2,
+      alpha: Math.random() * 0.45 + 0.05,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    }))
+
+    let raf = 0
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+      for (const p of pts) {
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.fillStyle = `${p.color}${p.alpha})`
+        ctx.fill()
+
+        p.x += p.dx
+        p.y += p.dy
+
+        if (p.x < 0 || p.x > canvas.width) p.dx *= -1
+        if (p.y < 0 || p.y > canvas.height) p.dy *= -1
+      }
+
+      raf = requestAnimationFrame(draw)
+    }
+
+    draw()
+
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', resize)
+    }
+  }, [])
+
+  return (
+    <canvas
+      ref={ref}
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-0"
+    />
+  )
+}
+
+function LoadingOverlay({ label }: { label: string }) {
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-[#06060f]/90 backdrop-blur-sm">
+      <div className="relative mb-5 h-10 w-10">
+        <span className="absolute inset-0 animate-spin rounded-full border border-transparent border-t-violet-400" />
+        <span className="absolute inset-[5px] animate-spin rounded-full border border-transparent border-t-cyan-400 [animation-duration:1.4s]" />
+        <span className="absolute inset-[10px] rounded-full bg-violet-500/20 blur-sm" />
+      </div>
+      <p className="text-[11px] uppercase tracking-[0.2em] text-white/40">{label}</p>
+    </div>
+  )
+}
+
+function Field({
+  label,
+  id,
+  type = 'text',
+  value,
+  onChange,
+  placeholder,
+  autoComplete,
+}: {
+  label: string
+  id: string
+  type?: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  autoComplete?: string
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label
+        htmlFor={id}
+        className="text-[11px] font-semibold uppercase tracking-widest text-white/35"
+      >
+        {label}
+      </label>
+      <input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className={[
+          'w-full rounded-xl border border-white/8 bg-white/[0.04] px-4 py-3',
+          'text-sm text-white placeholder:text-white/20',
+          'outline-none transition-all duration-200',
+          'focus:border-violet-500/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(139,92,246,0.1)]',
+        ].join(' ')}
+      />
+    </div>
+  )
+}
+
+function ErrorMsg({ msg }: { msg: string }) {
+  return (
+    <p className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-xs text-rose-300">
+      {msg}
+    </p>
+  )
+}
+
+function SuccessMsg({ msg }: { msg: string }) {
+  return (
+    <p className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-300">
+      {msg}
+    </p>
+  )
+}
+
+export default function EnterPage() {
+  const router = useRouter()
+
+  const [mode, setMode] = useState<Mode>('login')
+  const [loading, setLoading] = useState(false)
+  const [checkingSession, setCheckingSession] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+
+  const [login, setLogin] = useState<LoginFields>({
+    email: '',
+    password: '',
+  })
+
+  const [reg, setReg] = useState<RegisterFields>({
+    pseudo: '',
+    email: '',
+    password: '',
+    confirm: '',
+    ageConfirmed: false,
+  })
+
+  const clearMessages = () => {
+    setError(null)
+    setSuccess(null)
+  }
+
+  const switchMode = (m: Mode) => {
+    setMode(m)
+    clearMessages()
+  }
+
+  useEffect(() => {
+    let cancelled = false
 
     async function checkSession() {
       try {
-        const supabase = requireSupabaseBrowserClient();
+        const supabase = requireSupabaseBrowserClient()
         const {
-          data: { user },
-        } = await supabase.auth.getUser();
+          data: { session },
+        } = await supabase.auth.getSession()
 
-        if (!mounted) return;
+        if (cancelled) return
 
-        if (user) {
-          router.replace("/dashboard");
-          return;
+        if (session) {
+          router.replace('/dashboard')
+          return
         }
-      } catch (err: any) {
-        if (mounted) {
-          setError(err?.message || "Erreur lors de la vérification de session.");
-        }
+      } catch {
       } finally {
-        if (mounted) {
-          setCheckingSession(false);
+        if (!cancelled) {
+          setCheckingSession(false)
         }
       }
     }
 
-    checkSession();
+    checkSession()
 
     return () => {
-      mounted = false;
-    };
-  }, [router]);
+      cancelled = true
+    }
+  }, [router])
 
-  async function handleLogin() {
-    setError("");
-    setSuccess("");
+  const handleLogin = async () => {
+    clearMessages()
 
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (!isValidEmail(cleanEmail)) {
-      setError("Entre une adresse courriel valide.");
-      return;
+    if (!login.email.trim() || !login.password) {
+      setError('Remplis tous les champs.')
+      return
     }
 
-    if (password.length < 8) {
-      setError("Le mot de passe doit contenir au moins 8 caractères.");
-      return;
-    }
-
-    setLoading(true);
+    setLoading(true)
 
     try {
-      const supabase = requireSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient()
 
-      const { data, error: loginError } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
+      const { error: err } = await supabase.auth.signInWithPassword({
+        email: login.email.trim().toLowerCase(),
+        password: login.password,
+      })
 
-      if (loginError) throw loginError;
-      if (!data.user) throw new Error("Connexion impossible.");
+      if (err) {
+        setError(
+          err.message.includes('Invalid login credentials')
+            ? 'Email ou mot de passe incorrect.'
+            : err.message
+        )
+        return
+      }
 
-      await ensureProfileRecord(data.user);
-
-      router.replace("/dashboard");
-    } catch (err: any) {
-      setError(err?.message || "Échec de la connexion.");
+      router.push('/dashboard')
+    } catch {
+      setError('Une erreur inattendue s’est produite.')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
-  async function handleRegister() {
-    setError("");
-    setSuccess("");
+  const handleRegister = async () => {
+    clearMessages()
 
-    const cleanPseudo = pseudo.trim();
-    const cleanEmail = email.trim().toLowerCase();
+    const { pseudo, email, password, confirm, ageConfirmed } = reg
 
-    if (cleanPseudo.length < 3) {
-      setError("Le pseudo doit contenir au moins 3 caractères.");
-      return;
+    if (!pseudo.trim() || !email.trim() || !password || !confirm) {
+      setError('Tous les champs sont requis.')
+      return
     }
 
-    if (!isValidEmail(cleanEmail)) {
-      setError("Entre une adresse courriel valide.");
-      return;
+    if (pseudo.trim().length < 3) {
+      setError('Ton pseudo doit faire au moins 3 caractères.')
+      return
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Adresse email invalide.')
+      return
     }
 
     if (password.length < 8) {
-      setError("Le mot de passe doit contenir au moins 8 caractères.");
-      return;
+      setError('Le mot de passe doit faire au moins 8 caractères.')
+      return
     }
 
-    if (!agree18) {
-      setError("Tu dois confirmer l’accès réservé aux adultes.");
-      return;
+    if (password !== confirm) {
+      setError('Les mots de passe ne correspondent pas.')
+      return
     }
 
-    setLoading(true);
+    if (!ageConfirmed) {
+      setError('Tu dois confirmer avoir 18 ans ou plus pour accéder à EtherCristal.')
+      return
+    }
+
+    setLoading(true)
 
     try {
-      const supabase = requireSupabaseBrowserClient();
+      const supabase = requireSupabaseBrowserClient()
 
-      const emailRedirectTo =
-        typeof window !== "undefined"
-          ? `${window.location.origin}/dashboard`
-          : undefined;
-
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: cleanEmail,
+      const { data, error: signUpErr } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
         password,
         options: {
-          emailRedirectTo,
           data: {
-            pseudo: cleanPseudo,
+            pseudo: pseudo.trim(),
             is_18_plus: true,
           },
         },
-      });
+      })
 
-      if (signUpError) throw signUpError;
-      if (!data.user) throw new Error("Inscription impossible.");
+      if (signUpErr) {
+        setError(
+          signUpErr.message.includes('already registered')
+            ? 'Cet email est déjà utilisé.'
+            : signUpErr.message
+        )
+        return
+      }
 
-      await ensureProfileRecord(data.user, cleanPseudo);
+      if (data.user) {
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          pseudo: pseudo.trim(),
+        })
+      }
 
       setSuccess(
-        "Compte créé. Vérifie ton courriel si une confirmation est demandée, puis reconnecte-toi."
-      );
+        data.session
+          ? 'Compte créé. Bienvenue dans EtherCristal.'
+          : 'Compte créé. Vérifie ta boîte mail pour confirmer ton accès.'
+      )
 
-      setMode("login");
-      setPassword("");
-    } catch (err: any) {
-      setError(err?.message || "Échec de l’inscription.");
+      if (data.session) {
+        setTimeout(() => router.push('/dashboard'), 1200)
+      }
+    } catch {
+      setError('Une erreur inattendue s’est produite.')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-
-    if (loading) return;
-
-    if (mode === "login") {
-      await handleLogin();
-      return;
-    }
-
-    await handleRegister();
-  }
-
-  if (checkingSession) {
-    return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050507] px-4 text-white">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(190,20,20,0.22),transparent_28%),radial-gradient(circle_at_top_right,rgba(255,0,90,0.10),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(70,120,255,0.08),transparent_24%)]" />
-        <div className="relative w-full max-w-md rounded-[30px] border border-red-500/16 bg-[#0b0b10]/95 p-10 text-center shadow-[0_25px_90px_rgba(0,0,0,0.55)]">
-          <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-[24px] border border-red-500/16 bg-gradient-to-br from-red-700/20 via-black/10 to-fuchsia-700/10">
-            <RefreshCw className="h-10 w-10 animate-spin text-red-200" />
-          </div>
-          <div className="text-[11px] uppercase tracking-[0.34em] text-red-100/45">
-            EtherCristal
-          </div>
-          <h1 className="mt-3 text-3xl font-black tracking-[-0.03em] text-white">
-            Chargement...
-          </h1>
-        </div>
-      </div>
-    );
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#050507] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(190,20,20,0.22),transparent_35%),radial-gradient(circle_at_85%_25%,rgba(170,50,170,0.14),transparent_30%),radial-gradient(circle_at_50%_100%,rgba(59,130,246,0.10),transparent_40%)]" />
-      <div className="absolute left-[-120px] top-[10%] h-[360px] w-[360px] rounded-full bg-red-700/10 blur-[120px]" />
-      <div className="absolute right-[-80px] top-[22%] h-[320px] w-[320px] rounded-full bg-fuchsia-700/10 blur-[120px]" />
+    <div className="relative min-h-screen w-full overflow-hidden bg-[#06060f]">
+      <CrystalCanvas />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-7xl items-center px-4 py-8 lg:px-8">
-        <div className="grid w-full gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="hidden rounded-[34px] border border-red-500/14 bg-[#0d0d12]/90 p-8 shadow-[0_25px_90px_rgba(0,0,0,0.35)] lg:block">
-            <div className="inline-flex items-center gap-2 rounded-full border border-red-500/14 bg-red-950/14 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-red-100/75">
-              <Shield className="h-3.5 w-3.5" />
-              accès privé 18+
-            </div>
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0"
+        style={{
+          background: [
+            'radial-gradient(ellipse 65% 50% at 50% -5%, rgba(109,40,217,0.2) 0%, transparent 60%)',
+            'radial-gradient(ellipse 35% 25% at 15% 85%, rgba(6,182,212,0.07) 0%, transparent 60%)',
+            'radial-gradient(ellipse 30% 20% at 85% 80%, rgba(139,92,246,0.06) 0%, transparent 60%)',
+          ].join(', '),
+        }}
+      />
 
-            <h1 className="mt-6 max-w-xl text-6xl font-black leading-none tracking-[-0.05em] text-white">
-              EtherCristal
-            </h1>
+      <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 py-16">
+        <div className="mb-10 flex flex-col items-center gap-3 text-center">
+          <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-500/25 bg-violet-950/40 backdrop-blur-sm">
+            <span className="text-xl">⬡</span>
+          </div>
 
-            <p className="mt-5 max-w-xl text-base leading-7 text-white/62">
-              Entrée propre, sombre et premium. Connexion rapide, inscription claire,
-              sécurité simple, et redirection directe vers ton dashboard.
-            </p>
+          <h1
+            className="text-3xl font-black tracking-tight md:text-4xl"
+            style={{
+              background: 'linear-gradient(135deg, #fff 30%, #c4b5fd 60%, #818cf8 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
+            EtherCristal
+          </h1>
 
-            <div className="mt-8 grid gap-4 md:grid-cols-3">
-              <div className="rounded-[24px] border border-red-500/14 bg-black/20 p-5">
-                <div className="text-[10px] uppercase tracking-[0.22em] text-white/36">
-                  thème
-                </div>
-                <div className="mt-3 text-lg font-black text-white">
-                  obsidienne / rouge
-                </div>
-              </div>
-
-              <div className="rounded-[24px] border border-red-500/14 bg-black/20 p-5">
-                <div className="text-[10px] uppercase tracking-[0.22em] text-white/36">
-                  accès
-                </div>
-                <div className="mt-3 text-lg font-black text-white">
-                  compte membre
-                </div>
-              </div>
-
-              <div className="rounded-[24px] border border-red-500/14 bg-black/20 p-5">
-                <div className="text-[10px] uppercase tracking-[0.22em] text-white/36">
-                  sortie
-                </div>
-                <div className="mt-3 text-lg font-black text-white">
-                  /dashboard
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-[34px] border border-red-500/14 bg-[#0d0d12]/95 p-6 shadow-[0_25px_90px_rgba(0,0,0,0.45)] sm:p-8">
-            <div className="mb-6 flex rounded-[20px] border border-white/8 bg-black/20 p-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("login");
-                  setError("");
-                  setSuccess("");
-                }}
-                className={cx(
-                  "flex-1 rounded-[16px] px-4 py-3 text-sm font-black uppercase tracking-[0.14em] transition",
-                  mode === "login"
-                    ? "bg-red-500/14 text-white"
-                    : "text-white/56 hover:text-white"
-                )}
-              >
-                Connexion
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("register");
-                  setError("");
-                  setSuccess("");
-                }}
-                className={cx(
-                  "flex-1 rounded-[16px] px-4 py-3 text-sm font-black uppercase tracking-[0.14em] transition",
-                  mode === "register"
-                    ? "bg-red-500/14 text-white"
-                    : "text-white/56 hover:text-white"
-                )}
-              >
-                Inscription
-              </button>
-            </div>
-
-            <div className="mb-6">
-              <div className="text-[11px] uppercase tracking-[0.30em] text-red-100/34">
-                entrée sécurisée
-              </div>
-              <h2 className="mt-2 text-3xl font-black tracking-[-0.03em] text-white">
-                {mode === "login" ? "Reconnexion" : "Créer un compte"}
-              </h2>
-              <p className="mt-2 text-sm text-white/56">
-                {mode === "login"
-                  ? "Entre tes accès pour revenir directement sur ton espace."
-                  : "Crée ton compte membre avec un pseudo propre et un mot de passe solide."}
-              </p>
-            </div>
-
-            {error ? (
-              <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-red-400/18 bg-red-500/10 px-4 py-4 text-sm text-red-100">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            ) : null}
-
-            {success ? (
-              <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-emerald-400/18 bg-emerald-500/10 px-4 py-4 text-sm text-emerald-100">
-                <Shield className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{success}</span>
-              </div>
-            ) : null}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {mode === "register" ? (
-                <div>
-                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.20em] text-white/34">
-                    Pseudo
-                  </label>
-                  <div className="relative">
-                    <User className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                    <input
-                      value={pseudo}
-                      onChange={(e) => setPseudo(e.target.value)}
-                      placeholder="Ton pseudo"
-                      autoComplete="nickname"
-                      className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-12 py-4 text-sm text-white outline-none placeholder:text-white/28"
-                    />
-                  </div>
-                </div>
-              ) : null}
-
-              <div>
-                <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.20em] text-white/34">
-                  Courriel
-                </label>
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                  <input
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="nom@courriel.com"
-                    autoComplete="email"
-                    inputMode="email"
-                    className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-12 py-4 text-sm text-white outline-none placeholder:text-white/28"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.20em] text-white/34">
-                  Mot de passe
-                </label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-                  <input
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Minimum 8 caractères"
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                    className="w-full rounded-[18px] border border-red-500/12 bg-black/20 px-12 py-4 pr-14 text-sm text-white outline-none placeholder:text-white/28"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-white/45 transition hover:text-white"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-
-                {mode === "register" ? (
-                  <div className="mt-2 text-xs text-white/42">
-                    Force du mot de passe :{" "}
-                    <span className="font-black text-white">{passwordStrength}</span>
-                  </div>
-                ) : null}
-              </div>
-
-              {mode === "register" ? (
-                <label className="flex items-start gap-3 rounded-[18px] border border-white/8 bg-black/20 px-4 py-4 text-sm text-white/70">
-                  <input
-                    type="checkbox"
-                    checked={agree18}
-                    onChange={(e) => setAgree18(e.target.checked)}
-                    className="mt-1 h-4 w-4 rounded border-white/20 bg-black/20"
-                  />
-                  <span>
-                    Je confirme être majeur et accepter l’accès réservé aux adultes.
-                  </span>
-                </label>
-              ) : null}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-[18px] border border-red-400/18 bg-red-500/12 px-4 py-4 text-sm font-black uppercase tracking-[0.14em] text-white transition hover:bg-red-500/18 disabled:opacity-60"
-              >
-                {loading ? (
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ArrowRight className="h-4 w-4" />
-                )}
-                {mode === "login" ? "Entrer dans le dashboard" : "Créer le compte"}
-              </button>
-            </form>
-          </section>
+          <p className="text-[11px] uppercase tracking-[0.22em] text-white/25">
+            Espace privé — Accès réservé
+          </p>
         </div>
+
+        <div className="relative w-full max-w-md">
+          <div className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0b0b18]/90 shadow-[0_32px_80px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+            <div
+              aria-hidden
+              className="h-px w-full bg-gradient-to-r from-transparent via-violet-500/50 to-transparent"
+            />
+
+            {(loading || checkingSession) && (
+              <LoadingOverlay
+                label={
+                  checkingSession
+                    ? 'Vérification de la session…'
+                    : mode === 'login'
+                    ? 'Connexion en cours…'
+                    : 'Création du compte…'
+                }
+              />
+            )}
+
+            <div className="px-7 pb-8 pt-7">
+              <div className="mb-7 flex rounded-xl border border-white/[0.06] bg-white/[0.03] p-1">
+                {(['login', 'register'] as Mode[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => switchMode(m)}
+                    className={[
+                      'flex-1 rounded-lg py-2.5 text-xs font-semibold uppercase tracking-widest transition-all duration-200',
+                      mode === m
+                        ? 'border border-violet-500/30 bg-violet-600/30 text-violet-200 shadow-[0_0_12px_rgba(139,92,246,0.2)]'
+                        : 'text-white/30 hover:text-white/55',
+                    ].join(' ')}
+                  >
+                    {m === 'login' ? 'Connexion' : 'Inscription'}
+                  </button>
+                ))}
+              </div>
+
+              {mode === 'login' && (
+                <div className="flex flex-col gap-4">
+                  <Field
+                    label="Email"
+                    id="login-email"
+                    type="email"
+                    value={login.email}
+                    onChange={(v) => setLogin((p) => ({ ...p, email: v }))}
+                    placeholder="ton@email.com"
+                    autoComplete="email"
+                  />
+
+                  <Field
+                    label="Mot de passe"
+                    id="login-password"
+                    type="password"
+                    value={login.password}
+                    onChange={(v) => setLogin((p) => ({ ...p, password: v }))}
+                    placeholder="••••••••••"
+                    autoComplete="current-password"
+                  />
+
+                  {error && <ErrorMsg msg={error} />}
+                  {success && <SuccessMsg msg={success} />}
+
+                  <button
+                    onClick={handleLogin}
+                    disabled={loading || checkingSession}
+                    className={[
+                      'mt-1 w-full rounded-xl border py-3.5 text-sm font-bold uppercase tracking-widest transition-all duration-200',
+                      'border-violet-500/40 bg-violet-600/20 text-violet-200',
+                      'hover:border-violet-500/60 hover:bg-violet-600/30 hover:shadow-[0_0_20px_rgba(139,92,246,0.2)]',
+                      'disabled:pointer-events-none disabled:opacity-40',
+                    ].join(' ')}
+                  >
+                    Entrer
+                  </button>
+
+                  <p className="pt-1 text-center text-[11px] text-white/20">
+                    Pas encore de compte ?{' '}
+                    <button
+                      onClick={() => switchMode('register')}
+                      className="text-violet-400/70 underline-offset-2 hover:text-violet-300 hover:underline"
+                    >
+                      Rejoindre EtherCristal
+                    </button>
+                  </p>
+                </div>
+              )}
+
+              {mode === 'register' && (
+                <div className="flex flex-col gap-4">
+                  <Field
+                    label="Pseudo"
+                    id="reg-pseudo"
+                    value={reg.pseudo}
+                    onChange={(v) => setReg((p) => ({ ...p, pseudo: v }))}
+                    placeholder="TonNomCristal"
+                    autoComplete="username"
+                  />
+
+                  <Field
+                    label="Email"
+                    id="reg-email"
+                    type="email"
+                    value={reg.email}
+                    onChange={(v) => setReg((p) => ({ ...p, email: v }))}
+                    placeholder="ton@email.com"
+                    autoComplete="email"
+                  />
+
+                  <Field
+                    label="Mot de passe"
+                    id="reg-password"
+                    type="password"
+                    value={reg.password}
+                    onChange={(v) => setReg((p) => ({ ...p, password: v }))}
+                    placeholder="8 caractères minimum"
+                    autoComplete="new-password"
+                  />
+
+                  <Field
+                    label="Confirmer le mot de passe"
+                    id="reg-confirm"
+                    type="password"
+                    value={reg.confirm}
+                    onChange={(v) => setReg((p) => ({ ...p, confirm: v }))}
+                    placeholder="••••••••••"
+                    autoComplete="new-password"
+                  />
+
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 transition-colors hover:border-violet-500/20">
+                    <div className="relative mt-0.5 shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={reg.ageConfirmed}
+                        onChange={(e) =>
+                          setReg((p) => ({ ...p, ageConfirmed: e.target.checked }))
+                        }
+                        className="peer sr-only"
+                      />
+                      <div
+                        className={[
+                          'flex h-4.5 w-4.5 items-center justify-center rounded border transition-all duration-200',
+                          reg.ageConfirmed
+                            ? 'border-violet-500/60 bg-violet-500/30'
+                            : 'border-white/15 bg-white/[0.04]',
+                        ].join(' ')}
+                      >
+                        {reg.ageConfirmed && (
+                          <svg
+                            className="h-2.5 w-2.5 text-violet-300"
+                            fill="none"
+                            viewBox="0 0 12 12"
+                            stroke="currentColor"
+                            strokeWidth={2.5}
+                          >
+                            <path
+                              d="M2 6l3 3 5-5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+
+                    <span className="text-[11px] leading-relaxed text-white/35">
+                      Je confirme avoir{' '}
+                      <span className="font-bold text-white/55">18 ans ou plus</span> et accepter
+                      l&apos;accès à un espace adulte réservé.
+                    </span>
+                  </label>
+
+                  {error && <ErrorMsg msg={error} />}
+                  {success && <SuccessMsg msg={success} />}
+
+                  <button
+                    onClick={handleRegister}
+                    disabled={loading || checkingSession}
+                    className={[
+                      'mt-1 w-full rounded-xl border py-3.5 text-sm font-bold uppercase tracking-widest transition-all duration-200',
+                      'border-violet-500/40 bg-violet-600/20 text-violet-200',
+                      'hover:border-violet-500/60 hover:bg-violet-600/30 hover:shadow-[0_0_20px_rgba(139,92,246,0.2)]',
+                      'disabled:pointer-events-none disabled:opacity-40',
+                    ].join(' ')}
+                  >
+                    Rejoindre
+                  </button>
+
+                  <p className="pt-1 text-center text-[11px] text-white/20">
+                    Déjà membre ?{' '}
+                    <button
+                      onClick={() => switchMode('login')}
+                      className="text-violet-400/70 underline-offset-2 hover:text-violet-300 hover:underline"
+                    >
+                      Se connecter
+                    </button>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div
+              aria-hidden
+              className="h-px w-full bg-gradient-to-r from-transparent via-white/[0.04] to-transparent"
+            />
+          </div>
+
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -bottom-8 left-1/2 h-16 w-2/3 -translate-x-1/2 rounded-full blur-3xl"
+            style={{ background: 'rgba(109,40,217,0.12)' }}
+          />
+        </div>
+
+        <p className="relative z-10 mt-10 text-center text-[10px] uppercase tracking-[0.18em] text-white/15">
+          EtherCristal — espace privé adulte 18+
+        </p>
       </div>
     </div>
-  );
+  )
 }
